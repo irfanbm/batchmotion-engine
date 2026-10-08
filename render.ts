@@ -1,5 +1,4 @@
 import { app, BrowserWindow } from "electron";
-import type { BrowserWindowConstructorOptions } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -22,8 +21,11 @@ import {
   type StageRegion,
 } from "./quality";
 import {
+  framePlan,
+  renderWindowOptions,
   runSubjectGeometryPreflight,
   runTextLegibilityProbe,
+  seekAndFlush,
 } from "./preflight";
 import {
   alphaReportText,
@@ -74,6 +76,9 @@ export const EXPERIMENTAL_VISUAL_GATES = false;
 // immediately marking the job failed.
 export class RenderQualityError extends Error {
   readonly quality = true;
+  // Attached render frames (data URLs, downscaled) for vision-capable repair.
+  // Undefined when the failure carries no pixels (DOM gates, GSAP capture loop).
+  frames?: string[];
   constructor(message: string) {
     super(message);
     this.name = "RenderQualityError";
@@ -170,33 +175,6 @@ function safeName(value: string) {
 export function promptFileName(prompt: string) {
   return safeName(prompt.split(/[.;!?\r\n]/, 1)[0]);
 }
-export function renderWindowOptions(
-  width: number,
-  height: number,
-  partition = "motionforge-test",
-  alpha = false,
-): BrowserWindowConstructorOptions {
-  return {
-    show: false,
-    width,
-    height,
-    useContentSize: true,
-    frame: false,
-    transparent: alpha,
-    backgroundColor: alpha ? "#00000000" : "#ffffff",
-    enableLargerThanScreen: true,
-    webPreferences: {
-      javascript: true,
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      webSecurity: true,
-      backgroundThrottling: false,
-      offscreen: true,
-      partition,
-    },
-  };
-}
 export function assertRenderDimensions(width: number, height: number) {
   if (
     !Number.isInteger(width) ||
@@ -209,25 +187,6 @@ export function assertRenderDimensions(width: number, height: number) {
     throw new Error(
       `Render viewport ${width}x${height} exceeds the supported Chromium texture limit of 16384 pixels per axis.`,
     );
-}
-async function seekAndFlush(win: BrowserWindow, time: number) {
-  // Advance the deterministic virtual clock to this frame's time and let all queued
-  // requestAnimationFrame callbacks run for exactly that timestamp.
-  await win.webContents.executeJavaScript(
-    `window.__TIMECUT_SET_TIME__(${time});void document.documentElement.offsetHeight`,
-  );
-  await new Promise<void>((resolve, reject) => {
-    const painted = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    const timer = setTimeout(() => {
-      win.webContents.removeListener("paint", painted);
-      reject(new Error(`Renderer did not paint frame at t=${time.toFixed(3)}s.`));
-    }, 5000);
-    win.webContents.once("paint", painted);
-    win.webContents.invalidate();
-  });
 }
 export async function saveProject(
   job: Job,
@@ -316,10 +275,6 @@ export function hasSceneCoverage(
 ) {
   const report = pixelSceneCoverage(bitmap, width, height);
   return report.occupiedRatio >= 0.005 && report.boundsRatio >= 0.03;
-}
-export function framePlan(duration: number, fps: number) {
-  const count = Math.max(1, Math.round(duration * fps));
-  return { count, lastTime: (count - 1) / fps, duration: count / fps };
 }
 export { pixelChangeRatio } from "./quality";
 export function endpointReport(frames: Buffer[], looping: boolean) {

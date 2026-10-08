@@ -9,12 +9,11 @@ import {
 import {
   assertRenderDimensions,
   endpointReport,
-  framePlan,
   hasSceneCoverage,
   hasVisualVariation,
   promptFileName,
-  renderWindowOptions,
 } from "./render";
+import { framePlan, renderWindowOptions } from "./preflight";
 import { adaptationCacheSignature } from "./html-import";
 import { validateHtml } from "./validation";
 import {

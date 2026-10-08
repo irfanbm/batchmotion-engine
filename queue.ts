@@ -18,7 +18,8 @@ import {
   MAX_HTML_BYTES,
   scanImportedHtml,
 } from "./html-import";
-import { promptFileName, renderVideo, saveProject, isRenderQualityError, type RenderReport } from "./render";
+import { promptFileName, renderVideo, saveProject, isRenderQualityError, type RenderQualityError, type RenderReport } from "./render";
+import { consecutiveIdenticalErrors, type JobTrace } from "./harness/trace";
 import {
   renderHyperframesVideo,
   runHyperframesLint,
@@ -26,8 +27,10 @@ import {
   validateHyperframesComposition,
 } from "./hyperframes";
 import { validateHtml, structurePromiseWarnings } from "./validation";
+import { injectVirtualClock } from "./virtual-clock";
+import { capturePreviewStills } from "./preflight";
 import { markTxtDone } from "./txt";
-import type { EnginePaths, EngineStore, HistoryItem, Job, LogEntry, Settings } from "./types";
+import type { EnginePaths, EngineStore, HistoryItem, Job, LogEntry, PreviewDecision, Settings } from "./types";
 import {
   assertOutputSizePolicy,
   normalizeOutputFormat,
@@ -50,6 +53,87 @@ export class QueueService {
     private store: EngineStore,
     private paths: EnginePaths,
   ) {}
+  // Preview-gate approvals: prepare() parks here until the user picks
+  // render / revise / remake, or deletes the job.
+  private previewWaiters = new Map<string, { resolve: (d: PreviewDecision) => void; reject: (e: Error) => void }>();
+  private static readonly previewDeleted = "Job removed during preview.";
+  private async runPreviewGate(args: {
+    job: Job;
+    html: string;
+    renderSettings: Settings;
+    signal: AbortSignal;
+    projectFolder: string;
+    baseName: string;
+    alpha: boolean;
+    isHf: boolean;
+    isSplit: boolean;
+  }): Promise<string> {
+    const { job, renderSettings, signal, projectFolder, baseName } = args;
+    let html = args.html;
+    const validateCandidate = async (candidate: string): Promise<string[]> =>
+      args.isHf
+        ? await this.validateHyperframesCandidate(candidate, args.alpha, job, projectFolder, signal)
+        : validateHtml(candidate, args.alpha, { requireGsap: true, iconAssets: job.iconAssets, split: args.isSplit });
+    this.set(job, "preview", 10);
+    for (;;) {
+      if (signal.aborted) throw signal.reason || new Error("Stopped.");
+      try {
+        const loadFile = args.isHf
+          ? (await stageHyperframesComposition(projectFolder, job.id, html)).index
+          : path.join(projectFolder, `${baseName}.preview-load.html`);
+        if (!args.isHf) await fs.writeFile(loadFile, injectVirtualClock(ensureGsapRuntime(html)));
+        job.previewStills = await capturePreviewStills({
+          mode: job.mode ?? "background",
+          width: job.width,
+          height: job.height,
+          duration: job.duration,
+          loadFile,
+          outDir: projectFolder,
+          prefix: baseName,
+          signal,
+        });
+        job.error = undefined;
+      } catch (error) {
+        job.error = `Preview capture failed: ${(error as Error).message}`;
+      }
+      this.update();
+      this.log("info", "Preview ready · awaiting approval (Render / Revise / Remake / Delete)", job.id);
+      const decision = await this.waitForPreviewDecision(job, signal);
+      if (decision.action === "render") {
+        this.set(job, "ready", 10);
+        return html;
+      }
+      if (decision.action === "remake" && !job.blueprint) throw new Error("Remake needs a blueprint job.");
+      if (decision.action === "revise" && !job.blueprint) throw new Error("Revise needs a blueprint job.");
+      if (decision.action === "remake")
+        job.seed = saltedSeed(crypto.getRandomValues(new Uint32Array(1))[0], installSalt());
+      this.set(job, "generating", 5);
+      this.log("info", decision.action === "remake" ? "Preview remake requested · Regenerating from blueprint" : "Preview revision requested · Regenerating scene", job.id);
+      const candidate = await this.waitForProvider(job, signal, () =>
+        generateHtmlFromBlueprint(
+          renderSettings,
+          blueprintSchema.parse(job.blueprint),
+          job.seed,
+          signal,
+          decision.action === "revise" ? { html, errors: [decision.note] } : undefined,
+          job.iconAssets,
+          args.isSplit,
+          args.isHf,
+        ));
+      this.set(job, "validating", 8);
+      const errors = await validateCandidate(candidate);
+      if (errors.length) {
+        job.error = `Preview regeneration failed validation: ${errors.join("; ")}`;
+        this.update();
+        continue;
+      }
+      html = candidate;
+      job.rawResponse = html;
+      job.error = undefined;
+      await saveProject(job, html, projectFolder, baseName);
+      job.htmlPath = path.join(projectFolder, `${baseName}.html`);
+    }
+  }
   private async waitForProvider<T>(
     job: Job,
     signal: AbortSignal,
@@ -192,6 +276,7 @@ export class QueueService {
     return jobs;
   }
   remove(ids: string[]) {
+    for (const id of ids) this.rejectPreview(id, new Error(QueueService.previewDeleted));
     this.jobs = this.jobs.filter(
       (x) =>
         !ids.includes(x.id) ||
@@ -200,6 +285,7 @@ export class QueueService {
           "adapting",
           "validating",
           "ready",
+          "preview",
           "rendering",
           "encoding",
         ].includes(x.status),
@@ -213,6 +299,7 @@ export class QueueService {
         "adapting",
         "validating",
         "ready",
+        "preview",
         "rendering",
         "encoding",
       ].includes(x.status),
@@ -321,6 +408,62 @@ export class QueueService {
     const html =
       job?.htmlPath || (job?.output ? path.join(job.output, "index.html") : "");
     if (html) await shell.openPath(html);
+  }
+  private previewJob(id: string): Job {
+    const job = this.jobs.find((x) => x.id === id);
+    if (!job || job.status !== "preview") throw new Error("Job is not awaiting preview approval.");
+    return job;
+  }
+  private resolvePreview(id: string, decision: PreviewDecision): void {
+    const waiter = this.previewWaiters.get(id);
+    if (!waiter) throw new Error("Job is not awaiting preview approval.");
+    this.previewWaiters.delete(id);
+    waiter.resolve(decision);
+  }
+  private rejectPreview(id: string, error: Error): void {
+    const waiter = this.previewWaiters.get(id);
+    if (!waiter) return;
+    this.previewWaiters.delete(id);
+    waiter.reject(error);
+  }
+  private waitForPreviewDecision(job: Job, signal: AbortSignal): Promise<PreviewDecision> {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) {
+        reject(signal.reason || new Error("Stopped."));
+        return;
+      }
+      const onAbort = () => {
+        this.previewWaiters.delete(job.id);
+        reject(signal.reason || new Error("Stopped."));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      this.previewWaiters.set(job.id, {
+        resolve: (decision) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(decision);
+        },
+        reject: (error) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(error);
+        },
+      });
+    });
+  }
+  approvePreview(id: string): void {
+    this.previewJob(id);
+    this.log("info", "Preview approved · Rendering", id);
+    this.resolvePreview(id, { action: "render" });
+  }
+  revisePreview(id: string, note: string): void {
+    this.previewJob(id);
+    if (!note.trim()) throw new Error("A revision note is required.");
+    this.log("info", "Preview revision requested · Regenerating scene", id);
+    this.resolvePreview(id, { action: "revise", note: note.trim().slice(0, 2000) });
+  }
+  remakePreview(id: string): void {
+    this.previewJob(id);
+    this.log("info", "Preview remake requested · Regenerating from blueprint", id);
+    this.resolvePreview(id, { action: "remake" });
   }
   retry(id: string, settings: Settings) {
     const job = this.jobs.find((x) => x.id === id);
@@ -645,6 +788,10 @@ export class QueueService {
       if (job.blueprint) await fs.writeFile(path.join(projectFolder, `${baseName}.blueprint.json`), JSON.stringify(job.blueprint, null, 2));
       job.videoPath = path.join(batchFolder, `${baseName}.mp4`);
       this.set(job, "ready", 10);
+      if (!renderSettings.autoApprove) {
+        html = await this.runPreviewGate({ job, html, renderSettings, signal, projectFolder, baseName, alpha, isHf, isSplit });
+        job.rawResponse = html;
+      }
       return {
         job,
         batchFolder,
@@ -655,6 +802,7 @@ export class QueueService {
         renderSettings,
       };
     } catch (error) {
+      if ((error as Error).message === QueueService.previewDeleted) return undefined;
       job.error = (error as Error).message;
       this.set(job, signal.aborted ? "stopped" : "failed", job.progress);
       this.log("error", job.error, job.id);
@@ -695,6 +843,8 @@ export class QueueService {
       // trigger regeneration.
       const maxAttempts = 6;
       const qualityErrors: string[] = [];
+      const trace: JobTrace = { attempts: [] };
+      let attemptStartedAt = 0;
       let qualityReport: RenderReport | undefined;
       let lastQualityError: string | undefined;
       let html = job.rawResponse ?? (job.htmlPath ? await fs.readFile(job.htmlPath, "utf8") : "");
@@ -735,6 +885,7 @@ export class QueueService {
         );
       };
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        attemptStartedAt = Date.now();
         try {
           if (attempt > 1 && html) {
             // Re-render the regenerated scene.
@@ -749,6 +900,11 @@ export class QueueService {
           lastQualityError = (error as Error).message;
           if (!qualityErrors.includes(lastQualityError))
             qualityErrors.push(lastQualityError);
+          trace.attempts.push({ attempt, errors: [lastQualityError], startedAt: attemptStartedAt, endedAtMs: Date.now() });
+          if (consecutiveIdenticalErrors(trace, 3)) {
+            lastQualityError = `Stalled: the same failure 3 times in a row (${lastQualityError}). Needs human review of the attempt trace; further regenerations are unlikely to move it.`;
+            break;
+          }
           if (attempt >= maxAttempts) break;
           this.log(
             "warning",
@@ -756,7 +912,7 @@ export class QueueService {
             job.id,
           );
           if (signal.aborted) throw signal.reason || new Error("Stopped.");
-          const repair = { html, errors: [...qualityErrors] };
+          const repair = { html, errors: [...qualityErrors], frames: (error as RenderQualityError).frames };
           const candidate = await this.waitForProvider(job, signal, () =>
             job.blueprint
               ? generateHtmlFromBlueprint(renderSettings, blueprintSchema.parse(job.blueprint), job.seed, signal, repair, job.iconAssets, job.mode === 'split', job.mode === 'hyperframes')

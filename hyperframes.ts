@@ -22,12 +22,14 @@ import {
   RenderQualityError,
   defaultRenderReport,
   ffmpegExecutable,
-  framePlan,
-  renderWindowOptions,
+  isRenderQualityError,
   type RenderReport,
 } from "./render";
 import { normalizeOutputFormat, outputExtension } from "./output-format";
 import {
+  framePlan,
+  hfSeekAndFlush,
+  renderWindowOptions,
   runSubjectGeometryPreflight,
   runTextLegibilityProbe,
 } from "./preflight";
@@ -211,31 +213,6 @@ export function parseProgressLine(line: string): number | null {
   }
 }
 
-async function hfSeekAndFlush(win: BrowserWindow, compositionId: string, time: number): Promise<void> {
-  // The HyperFrames runtime owns the clock; the harness seeks the registered paused
-  // timeline directly, then waits for a real paint like the GSAP path does.
-  await win.webContents.executeJavaScript(`void window.__timelines[${JSON.stringify(compositionId)}].seek(${time}, false)`);
-  const waitPaint = () => new Promise<void>((resolve, reject) => {
-    const painted = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    const timer = setTimeout(() => {
-      win.webContents.removeListener("paint", painted);
-      reject(new Error(`Renderer did not paint frame at t=${time.toFixed(3)}s.`));
-    }, 5000);
-    win.webContents.once("paint", painted);
-    win.webContents.invalidate();
-  });
-  try {
-    await waitPaint();
-  } catch {
-    // One retry like the GSAP capture path: a missed paint frame is transient.
-    await win.webContents.executeJavaScript(`void window.__timelines[${JSON.stringify(compositionId)}].seek(${time}, false)`);
-    await waitPaint();
-  }
-}
-
 // Retry-once wrapper for flaky Electron ops (GPU paint scheduling under load can
 // drop a capture with an empty native error). Mirrors the GSAP capture retry.
 export async function withElectronRetry<T>(
@@ -322,6 +299,24 @@ export interface HyperframesRenderArgs {
   signal: AbortSignal;
   progress: (value: number) => void;
   onLog: (line: string) => void;
+}
+
+// Downscaled gate frames for vision-capable repair: small enough to ride along
+// cheaply, never fatal (a sampling failure must not mask the gate rejection).
+async function collectGateFrames(framesDir: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const name of ["open.png", "act-1.png", "act-3.png", "act-5.png", "act-0.png"]) {
+    try {
+      const image = nativeImage.createFromPath(path.join(framesDir, name));
+      const size = image.getSize();
+      if (!size.width || !size.height || image.isEmpty()) continue;
+      out.push(`data:image/jpeg;base64,${image.resize({ width: 480 }).toJPEG(60).toString("base64")}`);
+      if (out.length >= 3) break;
+    } catch {
+      continue;
+    }
+  }
+  return out;
 }
 
 export async function renderHyperframesVideo(args: HyperframesRenderArgs): Promise<RenderReport> {
@@ -532,6 +527,9 @@ export async function renderHyperframesVideo(args: HyperframesRenderArgs): Promi
       await runFfmpeg(ffmpeg, ["-y", "-loglevel", "error", "-ss", String(time), "-i", finalVideo, "-frames:v", "1", out], signal, () => {});
       return readBitmap(out, job.width, job.height);
     };
+    // Pixel gates run on extracted frames; a rejection carries downscaled frames
+    // so vision-capable repairs see the failure, not just its measurements.
+    try {
     const firstBitmap = await extractAt(0, "open");
     if (!alpha) {
       const opening = stageContentReport(firstBitmap, job.width, job.height, 0.08, 2.5, undefined);
@@ -624,6 +622,16 @@ export async function renderHyperframesVideo(args: HyperframesRenderArgs): Promi
     report.spikeMaxRatio = spikes.maxRatio;
     if (!spikes.ok)
       gateOrWarn(VISUAL_GATES.spike, "spike", `spike: ${spikes.reason ?? "abrupt geometry pop"}`);
+    } catch (error) {
+      if (isRenderQualityError(error)) {
+        try {
+          error.frames = await collectGateFrames(framesDir);
+        } catch {
+          // Sampling must never mask the rejection.
+        }
+      }
+      throw error;
+    }
     // Poster frame for debug artifacts and UI parity with the GSAP path.
     const posterTime = plan.lastTime / 2;
     await runFfmpeg(ffmpeg, ["-y", "-loglevel", "error", "-ss", String(posterTime), "-i", finalVideo, "-frames:v", "1", path.join(projectFolder, `${baseName}.jpg`)], signal, () => {});

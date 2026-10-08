@@ -1,4 +1,6 @@
-import type { BrowserWindow } from "electron";
+import { BrowserWindow, type BrowserWindowConstructorOptions } from "electron";
+import fs from "node:fs/promises";
+import path from "node:path";
 import {
   activeAt,
   geometryErrors,
@@ -307,4 +309,139 @@ export async function runTextLegibilityProbe(args: {
     ...rasterFindings,
   ]);
   return { findings, skipped, skippedItems };
+}
+
+export function framePlan(duration: number, fps: number) {
+  const count = Math.max(1, Math.round(duration * fps));
+  return { count, lastTime: (count - 1) / fps, duration: count / fps };
+}
+export function renderWindowOptions(
+  width: number,
+  height: number,
+  partition = "motionforge-test",
+  alpha = false,
+): BrowserWindowConstructorOptions {
+  return {
+    show: false,
+    width,
+    height,
+    useContentSize: true,
+    frame: false,
+    transparent: alpha,
+    backgroundColor: alpha ? "#00000000" : "#ffffff",
+    enableLargerThanScreen: true,
+    webPreferences: {
+      javascript: true,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+      backgroundThrottling: false,
+      offscreen: true,
+      partition,
+    },
+  };
+}
+export async function seekAndFlush(win: BrowserWindow, time: number) {
+  // Advance the deterministic virtual clock to this frame's time and let all queued
+  // requestAnimationFrame callbacks run for exactly that timestamp.
+  await win.webContents.executeJavaScript(
+    `window.__TIMECUT_SET_TIME__(${time});void document.documentElement.offsetHeight`,
+  );
+  await new Promise<void>((resolve, reject) => {
+    const painted = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      win.webContents.removeListener("paint", painted);
+      reject(new Error(`Renderer did not paint frame at t=${time.toFixed(3)}s.`));
+    }, 5000);
+    win.webContents.once("paint", painted);
+    win.webContents.invalidate();
+  });
+}
+export async function hfSeekAndFlush(win: BrowserWindow, compositionId: string, time: number): Promise<void> {
+  // The HyperFrames runtime owns the clock; the harness seeks the registered paused
+  // timeline directly, then waits for a real paint like the GSAP path does.
+  await win.webContents.executeJavaScript(`void window.__timelines[${JSON.stringify(compositionId)}].seek(${time}, false)`);
+  const waitPaint = () => new Promise<void>((resolve, reject) => {
+    const painted = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      win.webContents.removeListener("paint", painted);
+      reject(new Error(`Renderer did not paint frame at t=${time.toFixed(3)}s.`));
+    }, 5000);
+    win.webContents.once("paint", painted);
+    win.webContents.invalidate();
+  });
+  try {
+    await waitPaint();
+  } catch {
+    // One retry like the GSAP capture path: a missed paint frame is transient.
+    await win.webContents.executeJavaScript(`void window.__timelines[${JSON.stringify(compositionId)}].seek(${time}, false)`);
+    await waitPaint();
+  }
+}
+
+// Preview stills for the approval gate: head/middle/tail frames captured with the
+// engine-appropriate clock, saved as JPEGs for the UI. Not a render. The caller
+// prepares loadFile: GSAP gets an injected clock+runtime copy, HyperFrames its
+// staged index.html (tag + staged gsap file).
+export async function capturePreviewStills(args: {
+  mode: string;
+  width: number;
+  height: number;
+  duration: number;
+  loadFile: string;
+  outDir: string;
+  prefix: string;
+  signal: AbortSignal;
+}): Promise<string[]> {
+  const win = new BrowserWindow(renderWindowOptions(args.width, args.height, `preview-${Date.now()}`, false));
+  win.webContents.session.webRequest.onBeforeRequest((details, callback) =>
+    callback({ cancel: !details.url.startsWith("file:") }),
+  );
+  const runtimeErrors: string[] = [];
+  win.webContents.on("console-message", (_event, level, message) => {
+    if (level >= 3) runtimeErrors.push(message);
+  });
+  try {
+    if (args.signal.aborted) throw args.signal.reason || new Error("Stopped.");
+    await win.loadFile(args.loadFile);
+    if (args.mode === "hyperframes") {
+      const start = Date.now();
+      for (;;) {
+        if (args.signal.aborted) throw args.signal.reason || new Error("Stopped.");
+        const ready = await win.webContents.executeJavaScript(`!!(window.__timelines && window.__timelines["main"])`);
+        if (ready) break;
+        if (Date.now() - start > 30000) throw new Error("Preview scene did not register its timeline within 30 seconds.");
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    } else {
+      const ready = await win.webContents.executeJavaScript(
+        `new Promise(resolve=>{if(window.__MOTIONFORGE_READY__===true)return resolve(true);const timer=setTimeout(()=>resolve(false),5000);window.addEventListener('motionforge:ready',()=>{clearTimeout(timer);resolve(window.__MOTIONFORGE_READY__===true)},{once:true})})`,
+      );
+      if (!ready) throw new Error("Preview scene did not signal readiness within 5 seconds.");
+    }
+    win.setContentSize(args.width, args.height, false);
+    const metrics = await win.webContents.executeJavaScript(`({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})`);
+    if (metrics.dpr !== 1 || metrics.width !== args.width || metrics.height !== args.height)
+      throw new Error(`Preview viewport mismatch: expected ${args.width}x${args.height} at DPR 1.`);
+    if (runtimeErrors.length) throw new Error(`Preview scene initialization failed: ${runtimeErrors.at(-1)}`);
+    const paths: string[] = [];
+    for (const [index, fraction] of [0, 0.5, 1].entries()) {
+      const time = args.duration * fraction;
+      if (args.mode === "hyperframes") await hfSeekAndFlush(win, "main", time);
+      else await seekAndFlush(win, time);
+      const out = path.join(args.outDir, `${args.prefix}-preview-${index}.jpg`);
+      await fs.writeFile(out, (await win.webContents.capturePage()).toJPEG(70));
+      paths.push(out);
+    }
+    return paths;
+  } finally {
+    try { win.destroy(); } catch {}
+  }
 }

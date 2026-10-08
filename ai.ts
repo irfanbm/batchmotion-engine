@@ -5,6 +5,7 @@ import { pickDictionaryMatches, formatDictionaryContext } from './prompt-diction
 import { assemblePrompt, objectContract } from './prompt-assembler';
 import { stripGsapRuntime, ensureGsapRuntime } from './gsap-runtime';
 import { sceneCraftContract } from './scene-craft';
+import { buildObservationMessage } from './harness/observation';
 import { ZodError } from 'zod';
 export function outputContract(settings:Settings){return settings.outputFormat==='mov-prores4444-alpha'?`ALPHA OUTPUT: html, body, and canvas must be transparent. No background panel/backdrop/vignette/full-frame gradient/opaque wash/checkerboard or background metadata object. Subject/support remain opaque or intentionally semi-transparent; preserve soft-edge/glow alpha. Never flatten against black/white. Native transparency only; no background removal.`:`OPAQUE OUTPUT: use a full-bleed opaque background and existing full-canvas coverage.`}
 
@@ -123,11 +124,12 @@ export const contentFidelityContract = `CONTENT AND SEMANTIC DESIGN CONTRACT:
 - Stage one absolute timeline as entrance, primary semantic reveal, supports/follow-through, a genuinely readable hold, then finite exit or loop closure. Keep important text and state legible at normal playback speed.
 - Maintain clear size/contrast hierarchy, safe margins, non-overlapping labels, and restrained effects. Glass, shadow, glow, pulses, and ring lines are optional prompt-led materials, never defaults, and must not obscure silhouettes or text.`;
 
-const motionDirection: Record<Settings['motionStyle'], string> = {
+export const motionDirection: Record<Settings['motionStyle'], string> = {
   calm: `CALM CINEMATIC motion direction for premium stock footage. Use slow, readable travel, restrained amplitude, gentle acceleration, and no rapid pulses, spawning, streaking, unrelated micro-motion, or repeated short events. Keep foreground at most 1.3x the background's perceived speed and at least 70% of the frame visually quiet.`,
   balanced: `BALANCED motion direction. Use object-aware speed hierarchy: distant ambient layers slowest, secondary elements slow, and focal objects moderately active. Use 2-4 coordinated motion beats across the full timeline, restrained density, and no abrupt changes.`,
   dynamic: `DYNAMIC but polished motion direction. Keep background slower than focal elements. Use greater travel distance and stronger smooth acceleration while preserving readability; avoid extra repetitions, chaotic per-frame movement, jitter, and flashing.`,
-  prompt: `Derive the motion character from the user's prompt. Keep object-aware speed hierarchy based on depth and function, preserve readability, and do not add unrequested repetitive effects.`
+  prompt: `Derive the motion character from the user's prompt. Keep object-aware speed hierarchy based on depth and function, preserve readability, and do not add unrequested repetitive effects.`,
+  auto: `AUTO motion direction: choose the intensity that fits the subject and the motion words in the brief yourself (calm for serene subjects, dynamic for action, balanced when unclear). Once chosen, commit to it for the whole clip with the same discipline as a named direction: object-aware speed hierarchy, readability, no unrequested repetition.`,
 };
 
 const singleLoopContract = `STRICT SINGLE-GLOBAL-LOOP CONTRACT:
@@ -241,6 +243,26 @@ export async function checkAiProvider(settings:Settings,timeoutMs=12000,fetcher:
   // fatal: retrying them can never succeed.
   if(response.status>=400&&response.status<500&&![401,403,408,429].includes(response.status))return true;throw error}return true}catch(error){if(controller.signal.aborted)throw new Error(`AI provider health check timed out after ${Math.ceil(timeoutMs/1000)}s.`);if(error instanceof TypeError)throw new Error(`AI provider network check failed: ${error.message}`);throw error}finally{clearTimeout(timer)}}
 export const providerUnavailable=(error:unknown)=>/(?:\(|returned )(?:408|429|5\d\d)|fetch failed|network|ECONN|ENOTFOUND/i.test(String((error as Error)?.message||error));
+// Model catalog for the provider dropdown: base URL + API key in, sorted model ids
+// out. Throws readable errors (auth, network, timeout, unexpected shape) so the UI
+// can surface them instead of hanging.
+export async function listProviderModels(baseUrl:string,apiKey:string,fetcher:typeof fetch=fetch,timeoutMs=15000):Promise<string[]>{
+  if(!baseUrl.trim())throw new Error('Base URL is missing. Fill it before loading models.');
+  if(!apiKey.trim())throw new Error('API key is missing. Fill it before loading models.');
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+  try{
+    const response=await fetcher(`${baseUrl.replace(/\/$/, '')}/models`,{method:'GET',signal:controller.signal,headers:{authorization:`Bearer ${apiKey.trim()}`}});
+    if(!response.ok)throw await providerError(response);
+    const body=await response.json() as {data?:unknown};
+    const ids=Array.isArray(body.data)?body.data.map((x)=>typeof x==='string'?x:(x as {id?:unknown})?.id).filter((x):x is string=>typeof x==='string'&&!!x.trim()).map((x)=>x.trim()):[];
+    if(!ids.length)throw new Error('The provider returned no models. Check the base URL points at an OpenAI-compatible API.');
+    return [...new Set(ids)].sort();
+  }catch(error){
+    if(controller.signal.aborted)throw new Error(`Model list timed out after ${Math.ceil(timeoutMs/1000)}s.`);
+    if(error instanceof TypeError)throw new Error(`Model list network check failed: ${error.message}`);
+    throw error;
+  }finally{clearTimeout(timer)}
+}
 const wait=(ms:number,signal?:AbortSignal)=>new Promise<void>((resolve,reject)=>{
   if(signal?.aborted){reject(signal.reason);return;}
   const stop=()=>{clearTimeout(timer);reject(signal?.reason||new Error('Stopped.'));};
@@ -351,8 +373,10 @@ export async function readSseContent(response: Response, onProgress?: () => void
   return content;
 }
 
-async function requestHtml(settings: Settings, task: string, signal?: AbortSignal, temperature=.25, appendSkeleton = true, systemOverride?: string): Promise<string> {
-  const url=`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`,body=JSON.stringify({model:settings.model,temperature,stream:true,messages:[{role:'system',content:systemOverride ?? `${system}\n${outputContract(settings)}`},{role:'user',content:appendSkeleton ? `${task}\n\nFINAL MANDATORY CHECK (this is the last instruction before output):\n${mandatoryRuntimeSkeleton}` : task} ]});
+async function requestHtml(settings: Settings, task: string, signal?: AbortSignal, temperature=.25, appendSkeleton = true, systemOverride?: string, images?: string[]): Promise<string> {
+  const url=`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`;
+  const userTask = appendSkeleton ? `${task}\n\nFINAL MANDATORY CHECK (this is the last instruction before output):\n${mandatoryRuntimeSkeleton}` : task;
+  const body=JSON.stringify({model:settings.model,temperature,stream:true,messages:[{role:'system',content:systemOverride ?? `${system}\n${outputContract(settings)}`},{role:'user',content:buildObservationMessage(userTask, images ?? [])}] });
   for(let attempt=0;attempt<3;attempt++)try{
     const response=await fetch(url,{method:'POST',signal:AbortSignal.any([...(signal?[signal]:[]),AbortSignal.timeout(1_800_000)]),headers:{'content-type':'application/json',authorization:`Bearer ${settings.apiKey}`},body});
     if(!response.ok){if(transientAiStatus(response.status)&&attempt<2){await wait(1000*2**attempt,signal);continue}throw await providerError(response)}
@@ -596,7 +620,7 @@ export function hyperframesComposerContract(settings: Settings): string {
 }
 
 // Step 2: Coder translates the blueprint into ONE deterministic HTML file from scratch.
-export async function generateHtmlFromBlueprint(settings: Settings, bp: Blueprint, seed: number, signal?: AbortSignal, repair?: {html: string; errors: string[]}, icons?: IconAsset[], split?: boolean, hyperframes?: boolean): Promise<string> {
+export async function generateHtmlFromBlueprint(settings: Settings, bp: Blueprint, seed: number, signal?: AbortSignal, repair?: {html: string; errors: string[]; frames?: string[]}, icons?: IconAsset[], split?: boolean, hyperframes?: boolean): Promise<string> {
   const brief = blueprintToCoderBrief(bp);
   const assetBlock = icons?.length ? `
 
@@ -618,5 +642,5 @@ ${hyperframes ? '' : `
 FINAL MANDATORY CHECK (this is the last instruction before output):
 ${mandatoryRuntimeSkeleton}`}`;
   const temperature = repair ? Math.min(0.25 + 0.1 * repair.errors.length, 0.7) : 0.25;
-  return injectIconAssets(await requestHtml(settings, `${outputContract(settings)}\n${userContent}`, signal, temperature, !hyperframes, hyperframes ? hyperframesSystem : undefined), icons);
+  return injectIconAssets(await requestHtml(settings, `${outputContract(settings)}\n${userContent}`, signal, temperature, !hyperframes, hyperframes ? hyperframesSystem : undefined, repair?.frames), icons);
 }
