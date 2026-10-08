@@ -61,3 +61,23 @@ pipeline steering by `blueprint.test.ts`, `validation.test.ts`, and the rest.
 Conventional bump per change (`0.1.x` fixes, `0.x.0` gate/contract changes — the
 host re-verifies with typecheck + tests + smoke + a live review round on every
 bump, because prompt wording is behavior).
+
+## Consuming updates (host app checklist)
+
+After pushing engine changes and tagging (`git tag vX.Y.Z && git push origin vX.Y.Z`):
+
+1. In the app: `npm install "github:irfanbm/batchmotion-engine#vX.Y.Z"`
+   (private repo: git needs read access, same credentials as `gh`).
+2. Validate in the app, in order, stopping at the first red:
+   - `npm run typecheck`
+   - `npm test` (app shell tests)
+   - `npm run build` (vite + electron)
+   - `npm run test:render` (smoke; known flake: the second-in-process render lags
+     ~1 frame, while first renders stay identical across processes — only the
+     latter is enforced)
+   - one live review round when contracts, gates, or steering changed:
+     `BM_REVIEW_MODE=hyperframes node scripts/review-pipeline.cjs live "<prompt>"`
+     (or `split` for the GSAP path).
+3. Breaking changes (QueueService signature, `RenderReport` fields, prompt
+   contracts, `EngineStore`) must update `electron/main.ts`, `electron/storage.ts`,
+   or `scripts/` in the same step — typecheck catches most of it.
