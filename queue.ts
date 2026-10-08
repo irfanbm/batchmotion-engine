@@ -1086,6 +1086,9 @@ const interrupted: Job["status"][] = [
   "adapting",
   "validating",
   "ready",
+  // A waiting preview loses its in-memory approval waiter on restart; retry
+  // re-runs prepare and parks at preview again with fresh stills.
+  "preview",
   "rendering",
   "encoding",
 ];

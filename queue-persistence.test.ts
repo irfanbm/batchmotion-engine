@@ -4,6 +4,7 @@ import type { Job, Settings } from './types';
 const job=(status:Job['status'])=>({id:status,prompt:'test',seed:1,status,progress:50,duration:10,width:2560,height:1440,createdAt:new Date().toISOString()});
 assert.equal(restoreQueue([job('queued')])[0].status,'queued');
 assert.equal(restoreQueue([job('rendering')])[0].status,'stopped');
+assert.equal(restoreQueue([job('preview')])[0].status,'stopped','a waiting preview loses its waiter on restart, so retry re-parks it');
 assert.match(restoreQueue([job('generating')])[0].error||'',/Interrupted/);
 assert.equal(restoreQueue([job('adapting')])[0].status,'stopped');
 const settings={duration:20,width:3840,height:2160,fps:60,looping:true,motionStyle:'dynamic',model:'single',generationModel:'gen',refinementModel:'ref'} as Settings;
