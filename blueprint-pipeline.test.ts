@@ -56,8 +56,8 @@ void (async () => {
       html: 'old-scene',
       errors: [
         'nozzle detached',
-        'stage contrast quality gate: subject and stage background contrast is 1.80, below the required 2.5',
-        'text legibility quality gate: title: contrast 2.40 below 4.5',
+        'stage contrast quality gate: subject and stage background contrast is 1.80, below the required 2.5 (measured content ~#a7a399 on ground #c4c0b8)',
+        'text legibility quality gate: title: contrast 2.40 below 4.5 (text #f0ede6 on #e8e4da, 18px)',
         'subject bounds quality gate: t=6.000s shopping-cart clipped px L0.0 T0.0 R978.6 B0.0',
         'black slab quality gate: pure-black mass covers 17.8% of the stage, above the allowed 8%',
       ],
@@ -75,6 +75,7 @@ void (async () => {
     assert.match(coder, /near-black #101014 instead of pure #000000/);
     assert.match(coder, /rim light and grounded contact shadow/, 'contrast failures steer toward lighting the subject');
     assert.match(coder, /straddle the ramp/, 'contrast repairs pair tones from opposite ramp halves');
+    assert.match(coder, /set the stage ground to #101014/, 'contrast repairs carry an exact computed hex');
     assert.match(coder, /translucent or frosted subject/, 'translucent subjects get the outline-and-accents recipe');
     assert.match(coder, /measured pair \(content ~#XXXXXX on ground #YYYYYY/, 'contrast steering points at the measured hex pair');
     assert.match(coder, /raise small labels to at least 12px/, 'text failures steer toward readable type');
@@ -89,6 +90,7 @@ void (async () => {
     assert.match(coder, /allowCrop:true/, 'edge-crossing effects steer toward an allowCrop declaration');
     assert.match(coder, /Text paint:/, 'the contract pins text onto solid opaque chips');
     assert.match(coder, /fully opaque solid background chip/, 'text repairs name the solid-chip fix');
+    assert.match(coder, /set "title" to #101014/, 'text repairs carry an exact computed hex');
     assert.match(coder, /replace every pure #000000 fill/, 'black slabs steer toward near-black tones');
     assert.doesNotMatch(coder, /STUDIO SPLIT LAYOUT CONTRACT/);
     assert.doesNotMatch(coder, /SEED = 123456789|Never start a requestAnimationFrame/);

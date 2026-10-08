@@ -6,6 +6,40 @@ import { assemblePrompt, objectContract } from './prompt-assembler';
 import { stripGsapRuntime, ensureGsapRuntime } from './gsap-runtime';
 import { sceneCraftContract } from './scene-craft';
 import { buildObservationMessage } from './harness/observation';
+import { contrastRatio } from './quality';
+
+// Exact measured pairs look like:
+//   (measured content ~#ced6da on ground #eaf1f4)
+//   (subject tones ~#93978b on nearby #d0d6d2)
+//   (text #000000 on #172127, 22px) / (text #000000 on sampled #39332f, 20px)
+// Prescriptive directives leave the model nothing to judge: one hex to apply.
+function stageDirectives(all: string): string {
+  const out: string[] = [];
+  const re = /(?:measured content|subject tones)\s+~?#([0-9a-fA-F]{6})\s+on\s+(?:ground|nearby)\s+#([0-9a-fA-F]{6})/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(all)) !== null && out.length < 2) {
+    const [content, ground] = ['#' + m[1], '#' + m[2]];
+    const deep = '#101014', pale = '#f4f6f8';
+    const now = contrastRatio(content, ground);
+    const cDeep = contrastRatio(content, deep), cPale = contrastRatio(content, pale);
+    const pick = cDeep >= cPale ? deep : pale;
+    out.push(`set the stage ground to ${pick} (measured content ${content} reads ${now.toFixed(2)}:1 on current ground ${ground}; ${pick} reads ${Math.max(cDeep, cPale).toFixed(2)}:1)`);
+  }
+  return out.length ? ' Exact fixes, apply verbatim instead of nudging: ' + out.join(' ') : '';
+}
+function textDirectives(all: string): string {
+  const out: string[] = [];
+  const re = /([^;]{1,80}?): contrast [\d.]+ below ([\d.]+) \(text #([0-9a-fA-F]{6}) on (?:sampled )?#([0-9a-fA-F]{6})/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(all)) !== null && out.length < 3) {
+    const [label, need, fg, bg] = [m[1].trim().replace(/^.*quality gate:\s*/i, ''), m[2], '#' + m[3], '#' + m[4]];
+    const now = contrastRatio(fg, bg);
+    const cWhite = contrastRatio('#FFFFFF', bg), cBlack = contrastRatio('#101014', bg);
+    const pick = cWhite >= cBlack ? '#FFFFFF' : '#101014';
+    out.push(`set "${label}" to ${pick} (measured ${fg} on ${bg} reads ${now.toFixed(2)}:1, needs ${need}:1; ${pick} reads ${Math.max(cWhite, cBlack).toFixed(2)}:1)`);
+  }
+  return out.length ? ' Exact fixes, apply verbatim instead of nudging: ' + out.join(' ') : '';
+}
 import { ZodError } from 'zod';
 export function outputContract(settings:Settings){return settings.outputFormat==='mov-prores4444-alpha'?`ALPHA OUTPUT: html, body, and canvas must be transparent. No background panel/backdrop/vignette/full-frame gradient/opaque wash/checkerboard or background metadata object. Subject/support remain opaque or intentionally semi-transparent; preserve soft-edge/glow alpha. Never flatten against black/white. Native transparency only; no background removal.`:`OPAQUE OUTPUT: use a full-bleed opaque background and existing full-canvas coverage.`}
 
@@ -562,13 +596,13 @@ function motionSteering(errors: string[]): string {
   if (/empty frame|content covers/i.test(all))
     out += ' The stage opened or went empty: start with the subject already on screen with its badge (content covering at least 10% of the stage at t=0) and keep real content on the stage through the final frame instead of an empty background.';
   if (/stage contrast|blends into/i.test(all))
-    out += ' The subject blended into the background: the reported pair shows two tones from the same half of the ramp. Palette preservation does NOT apply to the stage ground in this repair, swap it decisively instead of nudging it. Read the reported measured pair (content ~#XXXXXX on ground #YYYYYY, or subject tones ~#XXXXXX on nearby #YYYYYY) and make the pair straddle the ramp: light content (mid-tone or brighter) gets a deep ground (#101014 to #3a4550), dark content gets a pale ground (#d8dde2 to #f4f6f8). Set BOTH sides of the pair when you can, never two mid-tones together. When the subject sits on a card or panel, the card is the background that must straddle, not the distant stage. A translucent or frosted subject can never contrast by itself: outline its silhouette with an opaque dark stroke (#101014, 3-6px) or a strong rim light, and give it opaque dark accents (cap, label panel, base) that clear 2.5:1 on their own. Add a rim light and grounded contact shadow on the subject. The pair must clear 2.5:1 with margin (aim 3:1) in every sampled frame.';
+    out += ' The subject blended into the background: the reported pair shows two tones from the same half of the ramp. Palette preservation does NOT apply to the stage ground in this repair, swap it decisively instead of nudging it. Read the reported measured pair (content ~#XXXXXX on ground #YYYYYY, or subject tones ~#XXXXXX on nearby #YYYYYY) and make the pair straddle the ramp: light content (mid-tone or brighter) gets a deep ground (#101014 to #3a4550), dark content gets a pale ground (#d8dde2 to #f4f6f8). Set BOTH sides of the pair when you can, never two mid-tones together. When the subject sits on a card or panel, the card is the background that must straddle, not the distant stage. A translucent or frosted subject can never contrast by itself: outline its silhouette with an opaque dark stroke (#101014, 3-6px) or a strong rim light, and give it opaque dark accents (cap, label panel, base) that clear 2.5:1 on their own. Add a rim light and grounded contact shadow on the subject. The pair must clear 2.5:1 with margin (aim 3:1) in every sampled frame.' + stageDirectives(all);
   if (/unknown role|declares no subject|more than one subject|missing its role/i.test(all))
     out += ' Fix the object metadata first: use only the roles subject, support, and background (never hero, badge, interaction, or other invented names), declare exactly one subject, and give every item its role. Then fix the remaining failures.';
   if (/black slab|pure-black mass/i.test(all))
     out += ' The frame carries a pure-black void: replace every pure #000000 fill, background panel, and type color with near-black #101014 (or a designed dark tone at or above #0a0a0f). Large black regions must be graded material with visible detail, never a flat #000 slab.';
   if (/text legibility/i.test(all))
-    out += ' Fix the reported text: raise small labels to at least 12px, then give each reported element an explicit solid foreground color on its own fully opaque solid background chip (no transparency, no gradient behind the text) until the measured pair meets its number. Palette preservation does NOT apply to text colors in this repair: when the reported pair shows dark-on-dark, the text itself must change even if the palette stays dark. Read the reported pair and swap sides of the ramp instead of nudging shades: both hexes dark (at or below #808080) means white #FFFFFF text; both light (at or above) means near-black #101014 text. Recompute the exact hex pair, do not guess.';
+    out += ' Fix the reported text: raise small labels to at least 12px, then give each reported element an explicit solid foreground color on its own fully opaque solid background chip (no transparency, no gradient behind the text) until the measured pair meets its number. Palette preservation does NOT apply to text colors in this repair: when the reported pair shows dark-on-dark, the text itself must change even if the palette stays dark. Read the reported pair and swap sides of the ramp instead of nudging shades: both hexes dark (at or below #808080) means white #FFFFFF text; both light (at or above) means near-black #101014 text. Recompute the exact hex pair, do not guess.' + textDirectives(all);
   if (/clipped px|fully outside viewport|near-zero size|missing element/i.test(all))
     out += ' The subject or one of its parts left the safe area: keep the subject and its badge fully inside the stage with at least 40px clearance at every settled frame (40%-75% of the clip) and end on a composed endcard. Measure the subject WRAPPER box, not just the visible glyph: shadows, badges, glows, and labels parented inside the wrapper count toward the box, so keep them inside the silhouette or give the wrapper 40px of air on every side. Declare the subject element by wrapping the visible subject tightly around its visible content: never stretch a stage-filling wrapper (inset:0 over the whole stage) and use only the roles subject, support, and background in the metadata. Replace any bounce, elastic, or back-ease overshoot that throws a part past an edge with an ease that lands inside the safe area. If an object genuinely exits the frame, declare visibleUntil (and visibleFrom for entrances after t=0) in the window.__MOTIONFORGE_OBJECTS__ metadata. Transient effects meant to cross the stage edges (light sweeps, glows, particle trails) must declare allowCrop:true there; shrink or reposition anything else so nothing important is cut by an edge.';
   if (/t=7\.9\d*s.*(clipped px|fully outside viewport)/.test(all))
