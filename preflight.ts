@@ -432,12 +432,27 @@ export async function capturePreviewStills(args: {
       throw new Error(`Preview viewport mismatch: expected ${args.width}x${args.height} at DPR 1.`);
     if (runtimeErrors.length) throw new Error(`Preview scene initialization failed: ${runtimeErrors.at(-1)}`);
     const paths: string[] = [];
+    const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    // Sleep-settled seeks, not paint-event waits: these windows produce no spontaneous
+    // paint events to wait on, while capturePage drives its own frame reliably.
+    // Stills are approximate human previews, never measurement frames.
+    await settle(1200);
     for (const [index, fraction] of [0, 0.5, 1].entries()) {
       const time = args.duration * fraction;
-      if (args.mode === "hyperframes") await hfSeekAndFlush(win, "main", time);
-      else await seekAndFlush(win, time);
+      if (args.signal.aborted) throw args.signal.reason || new Error("Stopped.");
+      if (args.mode === "hyperframes")
+        await win.webContents.executeJavaScript(`void window.__timelines["main"].seek(${time}, false)`);
+      else await win.webContents.executeJavaScript(`window.__TIMECUT_SET_TIME__(${time})`);
+      await settle(400);
       const out = path.join(args.outDir, `${args.prefix}-preview-${index}.jpg`);
-      await fs.writeFile(out, (await win.webContents.capturePage()).toJPEG(70));
+      let shot;
+      try {
+        shot = await win.webContents.capturePage();
+      } catch {
+        await settle(400);
+        shot = await win.webContents.capturePage();
+      }
+      await fs.writeFile(out, shot.toJPEG(70));
       paths.push(out);
     }
     return paths;
