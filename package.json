@@ -1,6 +1,6 @@
 {
   "name": "batchmotion-engine",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Batchmotion render engine: blueprint director, coder contracts, quality gates, and render pipelines (GSAP + HyperFrames). Edited independently; consumed by the Batchmotion app.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run build && node dist/blueprint.test.js && node dist/blueprint-pipeline.test.js && node dist/validation.test.js && node dist/quality.test.js && node dist/hyperframes.test.js && node dist/ai.test.js && node dist/errors.test.js && node dist/stabilization.test.js && node dist/html-import.test.js && node dist/txt.test.js && node dist/structured-prompt.test.js && node dist/insight.test.js && node dist/queue-persistence.test.js && node dist/output-format.test.js && node dist/prompt-dictionary.test.js && node dist/prompt-assembler.test.js && node dist/runtime-repair.test.js && node dist/virtual-clock.test.js && node dist/provider-health.test.js && node dist/streaming.test.js && node dist/json-recovery.test.js && node dist/gsap-runtime.test.js && node dist/icon-source.test.js"
   },
