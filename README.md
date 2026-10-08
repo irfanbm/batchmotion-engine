@@ -81,3 +81,18 @@ After pushing engine changes and tagging (`git tag vX.Y.Z && git push origin vX.
 3. Breaking changes (QueueService signature, `RenderReport` fields, prompt
    contracts, `EngineStore`) must update `electron/main.ts`, `electron/storage.ts`,
    or `scripts/` in the same step — typecheck catches most of it.
+
+## Contributor loop (for editing agents)
+
+When the owner hands you this repo with a revision request, the loop is fixed:
+
+1. Work in a checkout of this repo (same machine: the existing folder; elsewhere:
+   clone with an account that has read access — the repo is private).
+2. Make the change, then verify inside this repo before anything else:
+   `npm run typecheck`, then `npm test` (set `BATCHMOTION_FFMPEG_DIR` if ffmpeg
+   lives elsewhere).
+3. Commit, push, and tag the result (`v0.1.x` fixes, `v0.x.0` gate/contract/API
+   changes). No tag, no pickup: the host app pins exact tags.
+4. Report back the new tag number plus what changed and what the checks said.
+   Do not build installers or bump the app version — the host side does that on
+   explicit owner request only.
