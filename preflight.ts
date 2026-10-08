@@ -400,6 +400,9 @@ export async function capturePreviewStills(args: {
   prefix: string;
   signal: AbortSignal;
 }): Promise<string[]> {
+  // Concept mode (WAAPI scenes) has neither the virtual clock nor a HyperFrames
+  // timeline to seek; the review page shows its live composition instead.
+  if (args.mode === "concept") return [];
   const win = new BrowserWindow(renderWindowOptions(args.width, args.height, `preview-${Date.now()}`, false));
   win.webContents.session.webRequest.onBeforeRequest((details, callback) =>
     callback({ cancel: !details.url.startsWith("file:") }),
