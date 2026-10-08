@@ -91,8 +91,11 @@ When the owner hands you this repo with a revision request, the loop is fixed:
 2. Make the change, then verify inside this repo before anything else:
    `npm run typecheck`, then `npm test` (set `BATCHMOTION_FFMPEG_DIR` if ffmpeg
    lives elsewhere).
-3. Commit, push, and tag the result (`v0.1.x` fixes, `v0.x.0` gate/contract/API
-   changes). No tag, no pickup: the host app pins exact tags.
+3. Bump `package.json` version in the SAME commit as the change (`0.1.x` fixes,
+   `0.x.0` gate/contract/API changes), commit, push, and tag that exact version
+   (`git tag vX.Y.Z && git push origin vX.Y.Z`). The version field and the tag
+   must agree, or the host installs stale code. No tag, no pickup: the host app
+   pins exact tags.
 4. Report back the new tag number plus what changed and what the checks said.
    Do not build installers or bump the app version — the host side does that on
    explicit owner request only.
