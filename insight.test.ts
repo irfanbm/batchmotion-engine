@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import { insightStatus } from './insight-history';
+import type { InsightRecord, Job } from './types';
+import { classifyRenderability, enrichInsights, transientSearchStatus } from './insight';
+const now=new Date().toISOString(),extra={newsMomentum:null,sources:[]},rows=enrichInsights([{topic:'best',adobeSupply:10,wikiViews:1000,wikiGrowth:30,fetchedAt:now,...extra},{topic:'middle',adobeSupply:100,wikiViews:500,wikiGrowth:5,fetchedAt:now,...extra},{topic:'weak',adobeSupply:1000,wikiViews:10,wikiGrowth:-5,fetchedAt:now,...extra}]);
+assert.equal(rows[0].opportunity,'High');
+assert.equal(enrichInsights([{topic:'limited',adobeSupply:10,wikiViews:null,wikiGrowth:null,fetchedAt:now,...extra}])[0].confidence,'Limited');
+assert.equal(classifyRenderability('abstract fintech particle loop').renderability,'Compatible');
+assert.equal(classifyRenderability('photoreal human portrait').renderability,'Risky');
+assert.equal(transientSearchStatus(502),true);
+assert.equal(transientSearchStatus(401),false);
+console.log('insight scoring checks passed');
+const record={id:'i',title:'Test',promptVersions:{original:'Test'},createdAt:'x',updatedAt:'x'} as InsightRecord;
+assert.equal(insightStatus(record,[],[]),'New');
+assert.equal(insightStatus({...record,promptVersions:{original:'Test',beautified:'Prompt'}},[],[]),'Prompted');
+assert.equal(insightStatus({...record,jobId:'j'},[{id:'j',status:'rendering'} as Job],[]),'Rendering');

@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import { effectiveRenderSettings, restoreQueue } from './queue';
+import type { Job, Settings } from './types';
+const job=(status:Job['status'])=>({id:status,prompt:'test',seed:1,status,progress:50,duration:10,width:2560,height:1440,createdAt:new Date().toISOString()});
+assert.equal(restoreQueue([job('queued')])[0].status,'queued');
+assert.equal(restoreQueue([job('rendering')])[0].status,'stopped');
+assert.match(restoreQueue([job('generating')])[0].error||'',/Interrupted/);
+assert.equal(restoreQueue([job('adapting')])[0].status,'stopped');
+const settings={duration:20,width:3840,height:2160,fps:60,looping:true,motionStyle:'dynamic',model:'single',generationModel:'gen',refinementModel:'ref'} as Settings;
+assert.deepEqual(effectiveRenderSettings({...job('queued'),duration:8,width:2560,height:1440,fps:30,looping:false,motionStyle:'calm'},settings),{...settings,duration:8,width:2560,height:1440,fps:30,looping:false,motionStyle:'calm',outputFormat:'mp4-h264',encodeAnywayLarge:false});
+assert.equal(effectiveRenderSettings(job('queued'),settings).fps,60);
+assert.equal(effectiveRenderSettings({...job('queued'),generationModel:'old-gen'},settings).model,'old-gen');
+assert.equal(restoreQueue([{...job('queued'),outputFormat:'mov-prores4444-alpha'}])[0].outputFormat,'mov-prores4444-alpha','alpha selection survives queue restore');
+assert.equal(restoreQueue([job('queued')])[0].outputFormat,'mp4-h264','legacy jobs default to MP4 only when the snapshot is absent');
+assert.equal(effectiveRenderSettings({...job('queued'),outputFormat:'mov-prores4444-alpha'},settings).outputFormat,'mov-prores4444-alpha','render uses the job format snapshot instead of current settings');
+console.log('queue persistence checks passed');
