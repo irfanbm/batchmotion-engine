@@ -23,8 +23,3 @@ export interface EngineStore {
 export interface EnginePaths {
   userData: string;
 }
-export type PreviewDecision =
-  | { action: 'render' }
-  | { action: 'revise'; note: string }
-  | { action: 'remake' }
-  | { action: 'delete' };
