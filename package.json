@@ -1,6 +1,6 @@
 {
   "name": "batchmotion-engine",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Batchmotion render engine: blueprint director, coder contracts, quality gates, and render pipelines (GSAP + HyperFrames). Edited independently; consumed by the Batchmotion app.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

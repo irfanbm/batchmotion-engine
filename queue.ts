@@ -391,9 +391,12 @@ export class QueueService {
     }
   }
   // Render parked jobs on demand (single approve or bulk selection). Sequential,
-  // like the automatic flow; refuses while another run is preparing or rendering.
+  // like the automatic flow. A second render waits while one is active, but
+  // rendering a parked job while others are still preparing is allowed: preparation
+  // (AI + validation) and rendering (Chromium + ffmpeg) use different resources.
   async renderSelected(ids: string[], settings: Settings): Promise<void> {
-    if (this.running) throw new Error("Queue is busy; wait for the current run to finish.");
+    if (this.jobs.some((job) => job.status === "rendering" || job.status === "encoding"))
+      throw new Error("A render is already running; wait for it to finish.");
     if (!ids.length) throw new Error("No jobs selected.");
     if (!this.controller) this.controller = new AbortController();
     const signal = this.controller.signal;

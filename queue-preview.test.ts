@@ -25,5 +25,15 @@ await assert.rejects(() => queue.remakePreview('j1', settings), /need a blueprin
 queue.remove(['j1']);
 assert.equal(queue.jobs.length, 0, 'a preview job deletes cleanly');
 await assert.rejects(() => queue.approvePreview('j1', settings), /not awaiting preview approval/);
+await assert.rejects(() => queue.renderSelected([], settings), /No jobs selected/);
+(queue.jobs as Job[]).push(
+  { ...previewJob(), id: 'j2' },
+  { ...previewJob(), id: 'j3', status: 'rendering' },
+);
+await assert.rejects(
+  () => queue.renderSelected(['j2'], settings),
+  /already running/,
+  'a parked job waits while another render is active, but not while others prepare',
+);
 console.log('preview approval checks passed');
 })().catch((error) => { console.error(error); process.exitCode = 1; });
