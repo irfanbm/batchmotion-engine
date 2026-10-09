@@ -57,5 +57,24 @@ await assert.rejects(
   assert.equal((q2.jobs as Job[])[2].prompt, 'a blue boat', 'a failed item keeps its original prompt');
   console.log('beautify queue checks passed');
 }
+{
+  const q3 = new QueueService(() => {}, store, { userData: 'x' });
+  const mk = (id: string, status: Job['status']) =>
+    ({ id, prompt: 'p', seed: 1, status, progress: 0, duration: 8, width: 1920, height: 1080, createdAt: '' }) as Job;
+  (q3.jobs as Job[]).push(
+    mk('r1', 'queued'),
+    mk('r2', 'queued'),
+    mk('r3', 'rendering'),
+    mk('r4', 'preview'),
+    mk('r5', 'failed'),
+  );
+  q3.remove(['r1', 'r3', 'r4', 'r5']);
+  assert.deepEqual(
+    q3.jobs.map((j) => j.id),
+    ['r2', 'r3'],
+    'queued/failed/preview jobs remove; rendering stays locked',
+  );
+  console.log('remove-protection checks passed');
+}
 console.log('preview approval checks passed');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

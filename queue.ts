@@ -294,19 +294,11 @@ export class QueueService {
   }
   remove(ids: string[]) {
     for (const id of ids) this.preparedJobs.delete(id);
-    this.jobs = this.jobs.filter(
-      (x) =>
-        !ids.includes(x.id) ||
-        ![
-          "generating",
-          "adapting",
-          "validating",
-          "ready",
-          "preview",
-          "rendering",
-          "encoding",
-        ].includes(x.status),
-    );
+    // Protect only jobs the worker is actively processing. Preview is parked
+    // waiting for a user decision and must stay removable (queue bulk-remove
+    // and the Review delete button both rely on this).
+    const locked = new Set(["generating", "adapting", "validating", "ready", "rendering", "encoding"]);
+    this.jobs = this.jobs.filter((x) => !ids.includes(x.id) || locked.has(x.status));
     this.update();
   }
   clear() {
