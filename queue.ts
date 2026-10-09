@@ -30,6 +30,8 @@ import { validateHtml, structurePromiseWarnings } from "./validation";
 import { injectVirtualClock } from "./virtual-clock";
 import { capturePreviewStills } from "./preflight";
 import { markTxtDone } from "./txt";
+import { preparePromptForQueue } from "./queue-prompt";
+import { structuredPromptKeys } from "./structured-prompt";
 import type { EnginePaths, EngineStore, HistoryItem, Job, LogEntry, Settings } from "./types";
 import {
   assertOutputSizePolicy,
@@ -454,6 +456,32 @@ export class QueueService {
   regenerate(id: string, settings: Settings) {
     const item = this.history.find((x) => x.id === id);
     if (item) this.add([item.prompt], settings);
+  }
+  // Beauty pass after jobs are already visible: each item is structured in turn
+  // with live log progress, and a per-item failure keeps the original prompt
+  // instead of discarding the batch (the old all-or-nothing behavior).
+  async beautifyJobs(
+    ids: string[],
+    beautify: (prompt: string) => Promise<Record<(typeof structuredPromptKeys)[number], string>>,
+  ): Promise<{ beautified: number; kept: number }> {
+    const targets = this.jobs.filter((job) => ids.includes(job.id));
+    let beautified = 0;
+    let kept = 0;
+    for (const [index, job] of targets.entries()) {
+      try {
+        const next = await preparePromptForQueue(job.prompt, true, beautify);
+        if (next !== job.prompt) {
+          job.prompt = next;
+          beautified++;
+        } else kept++;
+        this.log("info", `Beauty prompt ${index + 1}/${targets.length} ready.`, job.id);
+      } catch (error) {
+        kept++;
+        this.log("warning", `Beauty prompt failed for one item, keeping original: ${(error as Error).message}`, job.id);
+      }
+      this.update();
+    }
+    return { beautified, kept };
   }
   async preview(id: string) {
     const job = this.jobs.find((x) => x.id === id);
