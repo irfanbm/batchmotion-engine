@@ -2,8 +2,14 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 export const gefootRuntime = readFileSync(path.join(__dirname, 'gefoot-runtime.source'), 'utf8').replace(/^export /gm, '');
-const promptSource = readFileSync(path.join(__dirname, 'gefoot-prompt.source'), 'utf8').replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
-export const gefootPrompt: (idea: string) => string = new Function(`${promptSource}; return buildPrompt;`)();
+// prompt.js imports stockCsvText from csv.js; the imports are stripped here, so csv.js is evaluated first
+// in the same scope to keep buildStockCsv() functional.
+const stripModuleSyntax = (source: string) => source.replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
+const csvSource = stripModuleSyntax(readFileSync(path.join(__dirname, 'gefoot-csv.source'), 'utf8'));
+const promptSource = stripModuleSyntax(readFileSync(path.join(__dirname, 'gefoot-prompt.source'), 'utf8'));
+const gefootModule: { buildPrompt: (idea: string) => string; buildStockCsv: (fileName: string, meta: { title?: string; keywords: string[]; category?: number }) => string } = new Function(`${csvSource}\n${promptSource}\n; return { buildPrompt, buildStockCsv };`)();
+export const gefootPrompt: (idea: string) => string = gefootModule.buildPrompt;
+export const gefootStockCsv = gefootModule.buildStockCsv;
 
 export function gefootHtml(code: string, duration: number, fps: number, seed: number, alpha: boolean): string {
   const runtime = alpha ? gefootRuntime.replace("ctx.fillStyle = '#000';\n    ctx.fillRect(0, 0, BASE_W, BASE_H);", 'ctx.clearRect(0, 0, BASE_W, BASE_H);') : gefootRuntime;

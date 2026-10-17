@@ -1,11 +1,11 @@
 // Scene runtime: turns the code pasted from ChatGPT into a deterministic
 // frame renderer. Shared by the live preview (main thread) and the export worker.
 
-const BASE_W = 1920;
-const BASE_H = 1080;
+export const BASE_W = 1920;
+export const BASE_H = 1080;
 
 // ChatGPT answers often arrive wrapped in markdown fences or a full HTML page.
-function extractCode(raw) {
+export function extractCode(raw) {
   let s = (raw || '').trim();
   const fences = [...s.matchAll(/```[a-zA-Z]*[ \t]*\r?\n([\s\S]*?)```/g)].map((m) => m[1]);
   if (fences.length) {
@@ -20,7 +20,7 @@ function extractCode(raw) {
 
 // One paste may hold several scenes (several code blocks, or several
 // "// TITLE:" headers in a row); the queue takes each as its own item.
-function splitScenes(raw) {
+export function splitScenes(raw) {
   const text = raw || '';
   const fences = [...text.matchAll(/```[a-zA-Z]*[ \t]*\r?\n([\s\S]*?)```/g)]
     .map((m) => m[1].trim())
@@ -33,7 +33,7 @@ function splitScenes(raw) {
   return scenes.length > 1 ? scenes : [single];
 }
 
-function parseMeta(code) {
+export function parseMeta(code) {
   const title = code.match(/^\s*\/\/\s*TITLE:\s*(.+)$/im)?.[1]?.trim() || '';
   const kw = code.match(/^\s*\/\/\s*KEYWORDS:\s*(.+)$/im)?.[1] || '';
   const keywords = [...new Set(kw.split(',').map((k) => k.trim()).filter(Boolean))];
@@ -286,7 +286,7 @@ function clipCostlyDraws(ctx, proto, rawSet) {
   }
 }
 
-function compileScene(rawCode, { duration, fps, seed = 1 }) {
+export function compileScene(rawCode, { duration, fps, seed = 1 }) {
   const code = extractCode(rawCode);
   if (!code) throw new Error('Kode masih kosong.');
 
@@ -350,4 +350,3 @@ function compileScene(rawCode, { duration, fps, seed = 1 }) {
 
   return { drawFrame, totalFrames, meta: parseMeta(code), code };
 }
-
