@@ -104,6 +104,8 @@ export function buildPrompt(idea) {
 
 CONCEPT: ${concept}
 
+CONCEPT PRIORITY: The CONCEPT is authoritative for subject, composition, density, style and decoration. It overrides every default below when the two conflict. Obey explicit exclusions even when a later quality rule suggests adding or filling something. Only the technical output format, required function signatures and runtime restrictions are non-negotiable.
+
 You are the art director: choose the style, color palette, composition and pacing that make this concept look as premium and commercially useful as possible. If the concept is short or vague, make a strong creative decision yourself - do not ask me questions.
 
 OUTPUT FORMAT - reply with exactly ONE \`\`\`javascript code block and nothing else, using this skeleton:
@@ -146,7 +148,9 @@ TECHNICAL RULES (strict):
    - animate objects like physical things: slide or drop in with overshoot, slight rotation, settle, and let shadows move with them.
    Only attempt objects that can be built convincingly from clean shapes; simplify anything else into a stylized icon rather than a detailed illustration.
 
-VISUAL QUALITY: premium and polished. Pick the look that fits the concept - glowing and cinematic for tech or abstract scenes, clean and tactile (soft shadows, paper, glass, friendly colors) for object-based explainer scenes. Build real depth with background, middle and foreground layers, rich gradients, varied sizes and opacities, smooth easing (ease-in-out, overshoot, staggered timing) and a subtle vignette. Add secondary motion and small details so every second stays interesting. Fill the whole 16:9 frame with a balanced composition. It must look like professional motion graphics, not a coding demo.`;
+VISUAL QUALITY: premium and polished. Pick the look that fits the concept - glowing and cinematic for tech or abstract scenes, clean and tactile (soft shadows, paper, glass, friendly colors) for object-based explainer scenes. Build real depth with background, middle and foreground layers, rich gradients, varied sizes and opacities, smooth easing (ease-in-out, overshoot, staggered timing). Unless the CONCEPT explicitly restricts them, you may use a subtle vignette, secondary motion and small details. Draw only elements that carry meaning for the CONCEPT; do not add ambient particles, decorative dots, framing bars, vignettes, glows, ribbons, background ornaments or other decoration unless the CONCEPT asks for them. Do not fill negative space that the CONCEPT reserves. It must look like professional motion graphics, not a coding demo.
+
+CONTINUITY: For sequences, keep one persistent set of meaningful objects for the whole clip. Reach each new step by transforming those objects over 0.6-0.9 seconds with easing; do not replace a complete drawing with another drawing in the same position. Interpolate position, size, corner radius, rotation, color and opacity instead of switching on a stage index. Let the next step begin before the previous one fully ends with anticipation, movement and settle.`;
 }
 
 export function buildFixPrompt(message) {

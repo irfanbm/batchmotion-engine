@@ -69,6 +69,19 @@ function patchContext(ctx) {
   const proto = Object.getPrototypeOf(ctx);
   const rawSet = proto.setTransform;
   ctx.__scale = 1;
+  const scaleProperty = (name, transform = (value, scale) => value * scale) => {
+    const descriptor = Object.getOwnPropertyDescriptor(proto, name);
+    if (!descriptor || !descriptor.get || !descriptor.set) return;
+    Object.defineProperty(ctx, name, {
+      configurable: true,
+      get() { return descriptor.get.call(this); },
+      set(value) { descriptor.set.call(this, transform(value, this.__scale || 1)); },
+    });
+  };
+  scaleProperty('shadowBlur');
+  scaleProperty('shadowOffsetX');
+  scaleProperty('shadowOffsetY');
+  scaleProperty('filter', (value, scale) => typeof value === 'string' ? value.replace(/(-?\d*\.?\d+)px\b/g, (_, n) => `${Number(n) * scale}px`) : value);
   ctx.__rawSetTransform = rawSet;
   ctx.setTransform = function (a, b, c, d, e, f) {
     if (a && typeof a === 'object') ({ a, b, c, d, e, f } = a);
