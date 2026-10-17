@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { needsTransitionRepair, popScore, refineTransitions, transitionRepairErrors } from './canvas-refine';
 import { popReport } from './quality';
+import { buildGefootPrompt } from './canvas-scene';
 
 const calm = Array.from({ length: 300 }, (_, i) => (i === 0 ? 0 : 0.004));
 const cuts = (frames: number[], step: number) => calm.map((v, i) => (frames.includes(i) ? step : v === 0.004 ? 0.0004 : v));
@@ -61,4 +62,9 @@ test('an unreadable step series never blocks generation', async () => {
 test('score ranks fewer/smaller cuts as calmer', () => {
   assert.ok(popScore(popReport(cuts([100], 0.01))) < popScore(popReport(result5)));
   assert.ok(transitionRepairErrors(popReport(result5), 30).length === 2);
+});
+
+test('every Canvas request carries the microstock flow/placement/shape/motion contract', () => {
+  const p = buildGefootPrompt('checkout journey', 10, 30, 7);
+  for (const k of ['MICROSTOCK FOOTAGE CONTRACT', 'FLOW', 'PLACEMENT', 'SHAPE', 'MOTION', 'safe area', 'persistent', 'HOST OPTIONS: DURATION must be 10']) assert.ok(p.includes(k), k);
 });
