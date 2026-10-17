@@ -13,7 +13,8 @@ import {
   refineSingleLoop,
 } from "./ai";
 import { canvasBrief, canvasHtml, extractJavaScript, parseCanvasMeta, validateCanvasCode } from "./canvas-scene";
-import { probeCanvas } from './canvas-probe';
+import { probeCanvas, probeCanvasSteps } from './canvas-probe';
+import { refineTransitions } from './canvas-refine';
 import {
   adaptationCacheMatches,
   adaptationCacheSignature,
@@ -677,6 +678,14 @@ export class QueueService {
           const snippet = code.replace(/\s+/g, " ").slice(0, 120);
           this.log("warning", `Canvas validation failed: ${errors.join("; ")} · extracted ${code.length} chars · starts "${snippet}" · Retry ${retries}/${settings.retryCount}`, job.id);
         }
+        job.rawResponse = code;
+        code = await refineTransitions(code, {
+          fps: renderSettings.fps,
+          log: (m) => this.log('info', m, job.id),
+          steps: (c) => probeCanvasSteps(canvasHtml(c, renderSettings.fps, job.seed, alpha, expectedDuration), projectFolder, expectedDuration, signal, renderSettings.fps),
+          validate: async (c) => { const e = validateCanvasCode(c, expectedDuration); return e.length ? e : await probeCanvas(canvasHtml(c, renderSettings.fps, job.seed, alpha, expectedDuration), projectFolder, expectedDuration, signal, renderSettings.fps); },
+          regenerate: async (c, errs) => extractJavaScript(await this.waitForProvider(job, signal, () => generateCanvasCode(renderSettings, canvasBrief(job), job.seed, signal, { code: c, errors: errs }), () => checkAiProvider(renderSettings)), expectedDuration),
+        });
         job.rawResponse = code;
         { const metaDur = parseCanvasMeta(code).duration; if (metaDur && metaDur !== expectedDuration) this.log('warning', `Model metadata DURATION ${metaDur}s ignored; host duration ${expectedDuration}s is used.`, job.id); }
         job.duration = expectedDuration;
