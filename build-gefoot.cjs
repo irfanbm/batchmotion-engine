@@ -1,16 +1,16 @@
 // Copies the vendored Gefoot Canvas runtime/prompt sources into dist/ as *.source files.
-// Sources live INSIDE this repository (resources/gefoot) so a fresh clone builds and packs
-// without any sibling folder. Override with GEFOOT_SRC_DIR only for local experiments.
+// Canvas sources live INSIDE this repository (resources/canvas) so a fresh clone builds and packs
+// without any sibling folder. Override with CANVAS_SRC_DIR only for local experiments.
 const fs = require('node:fs');
 const path = require('node:path');
 
-const root = process.env.GEFOOT_SRC_DIR ? path.resolve(process.env.GEFOOT_SRC_DIR) : path.join(__dirname, 'resources', 'gefoot');
+const root = process.env.CANVAS_SRC_DIR ? path.resolve(process.env.CANVAS_SRC_DIR) : path.join(__dirname, 'resources', 'canvas');
 const required = ['runtime', 'prompt', 'csv']; // prompt.js imports stockCsvText from csv.js
 
 const missing = required.filter((name) => !fs.existsSync(path.join(root, `${name}.js`)));
 if (missing.length) {
   console.error(`build-gefoot: missing ${missing.map((n) => `${n}.js`).join(', ')} in ${root}.`);
-  console.error('Add the Gefoot sources to resources/gefoot/ (runtime.js, prompt.js, csv.js).');
+  console.error('Add the Canvas sources to resources/canvas/ (runtime.js, prompt.js, csv.js).');
   process.exit(1);
 }
 

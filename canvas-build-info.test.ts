@@ -17,9 +17,9 @@ test('every Canvas page says which engine build produced it', () => {
 });
 
 test('stamp hashes match the vendored sources actually bundled (detects a stale or hand-copied runtime)', () => {
-  assert.equal(engineBuildInfo.sources.runtime, sha8(res('resources', 'gefoot', 'runtime.js')));
-  assert.equal(engineBuildInfo.sources.prompt, sha8(res('resources', 'gefoot', 'prompt.js')));
-  assert.equal(engineBuildInfo.sources.csv, sha8(res('resources', 'gefoot', 'csv.js')));
+  assert.equal(engineBuildInfo.sources.runtime, sha8(res('resources', 'canvas', 'runtime.js')));
+  assert.equal(engineBuildInfo.sources.prompt, sha8(res('resources', 'canvas', 'prompt.js')));
+  assert.equal(engineBuildInfo.sources.csv, sha8(res('resources', 'canvas', 'csv.js')));
   assert.equal(engineBuildInfo.sources.gsap, sha8(res('resources', 'gsap.min.js')));
   assert.equal(engineBuildInfo.version, JSON.parse(readFileSync(res('package.json'), 'utf8')).version);
 });
