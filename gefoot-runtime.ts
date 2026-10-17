@@ -11,11 +11,22 @@ const gefootModule: { buildPrompt: (idea: string) => string; buildStockCsv: (fil
 export const gefootPrompt: (idea: string) => string = gefootModule.buildPrompt;
 export const gefootStockCsv = gefootModule.buildStockCsv;
 
+// The runtime pre-paints every frame black. That only shows when a scene fails to cover the frame (scenes that
+// paint their own background are unaffected: measured 0 differing pixels), so opaque output keeps it as a visible
+// safety net. Alpha output must clear instead. Whitespace-tolerant so CRLF checkouts work, and loud on mismatch:
+// a silent no-op here would ship an opaque black "alpha" video.
+const OPAQUE_PREFILL = /ctx\.fillStyle\s*=\s*'#000';\s*ctx\.fillRect\(0,\s*0,\s*BASE_W,\s*BASE_H\);/;
+export function makeAlphaRuntime(runtime: string): string {
+  if (!OPAQUE_PREFILL.test(runtime)) throw new Error('Gefoot runtime: opaque background pre-fill not found; cannot build an alpha Canvas page.');
+  return runtime.replace(OPAQUE_PREFILL, 'ctx.clearRect(0, 0, BASE_W, BASE_H);');
+}
+
 export function gefootHtml(code: string, duration: number, fps: number, seed: number, alpha: boolean): string {
-  const runtime = alpha ? gefootRuntime.replace("ctx.fillStyle = '#000';\n    ctx.fillRect(0, 0, BASE_W, BASE_H);", 'ctx.clearRect(0, 0, BASE_W, BASE_H);') : gefootRuntime;
+  const runtime = alpha ? makeAlphaRuntime(gefootRuntime) : gefootRuntime;
   const script = `${runtime}\nconst canvas=document.querySelector('canvas');
 const ctx=canvas.getContext('2d');
 window.__MOTIONFORGE_CANVAS_ERROR__='';
+window.__MOTIONFORGE_ALPHA__=${alpha ? 'true' : 'false'};
 try {
 const scene=compileScene(${JSON.stringify(code)},${JSON.stringify({ duration, fps, seed })});
 window.__GEOF_SCENE__=scene;
