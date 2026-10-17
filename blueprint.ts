@@ -44,6 +44,9 @@ export const sceneObjectSchema = z.object({
     aspectRatio: z.number().positive(), // local width / height, independent of viewport
     parts: z.array(z.object({ name: z.string().min(1), rect: rectSchema })).min(2),
     attachment: z.string().min(8),
+    anatomy: z.array(z.string().min(4)).min(3).optional(),
+    perspective: z.string().min(8).optional(),
+    occlusionOrder: z.array(z.string().min(1)).min(1).optional(),
   }).optional(), // Older saved blueprints did not carry a construction specification.
 });
 
@@ -342,6 +345,7 @@ export function blueprintToCoderBrief(bp: Blueprint): string {
   for (const s of bp.choreography) {
     lines.push(`- [${s.from}s–${s.to}s] #${s.objectId} ${s.property}: ${s.fromValue} -> ${s.toValue}${s.trajectory ? ` via ${s.trajectory}` : ''} | easing ${s.easing}${s.easingSpec ? ` ${s.easingSpec}` : ''}${s.physical ? ` | physical: ${s.physical}` : ''}${s.trigger ? ` | trigger: ${s.trigger}` : ''}${s.reaction ? ` | reaction: ${s.reaction}` : ''}`);
   }
+  lines.push('MOTION IMPLEMENTATION RULE: every choreography row must map to a real target element or named group. A camera/scene row must use a camera wrapper; a depth row must use a distinct layer; a part row must use that part, never only the parent subject. If an explicit object state conflicts with a motion row, preserve the explicit state and convert the row to non-state motion (camera drift, light sweep, or contact-shadow response).');
   lines.push('');
   lines.push(`LOOP MATH: duration ${bp.loop.durationSec}s @ ${bp.loop.fps}fps. ${bp.loop.enabled ? `Match state and velocity at 0 and ${bp.loop.durationSec}s.` : 'FINITE clip: no return or reverse required.'} Resolution mechanism: ${bp.loop.returnMechanism}.`);
   if (bp.safeZone) lines.push(`SAFE ZONE: ${JSON.stringify(bp.safeZone)}`);
@@ -360,13 +364,18 @@ ${sceneCraftContract}
 Core doctrine:
 - Commercial idea BEFORE decoration. If removing decorative elements empties the concept, it FAILS.
 - The hero object must be SPECIFIC (not a generic category) with at least 3 concrete visual details, a clear material, and a functional role.
+- Parse explicit object states as hard constraints before inventing motion. Words such as closed, open, folded, empty, full, stationary, sealed, upright, or broken describe the required neutral frame and must be preserved exactly. Never use choreography to contradict an explicit state.
 - The hero must be a REAL-WORLD OBJECT when the brief names one: pick the exact class (bottle, cart, phone), list its canonical parts (at least three in geometry.parts), and keep real proportions. When a SUBJECT anatomy recipe is provided in the request, follow it exactly. Stand-ins like orb, energy field, glow blob, or abstract swirl are rejected for concrete briefs; genuinely abstract briefs keep shapes intentional and labeled.
+- For a desk/table hero, the canonical parts must include a thin desktop top plane, front edge/fascia, underside support, attached leg assemblies, feet/contact points, and the object resting on top. For a closed laptop, parts must describe a closed base/lid assembly and contact shadow; never plan an open-screen silhouette unless the brief explicitly says open.
+- For a seated office desk, specify physical dimensions before projected bounds: typically width 140-160 cm, depth 65-80 cm, total height 72-76 cm, top thickness 2-3 cm. Include these proportions in geometry.anatomy and the camera mapping in geometry.perspective. Derive leg length from total height minus slab/mounting thickness. Fit projected geometry uniformly within rect; rect is a placement envelope, never permission to stretch legs to fill its height. Respect explicitly requested standing/custom furniture dimensions instead of these defaults.
+- Every concrete hero needs an anatomy sheet in geometry: visible solids and their function, attachment/contact points, and an occlusion order. It also needs a perspective plan: camera elevation/azimuth or a single shared receding-edge direction, which faces are visible, and how depth changes size. Do not mix unrelated perspective systems between parts.
+- Commercial stock staging must be specified separately from object geometry: define stage wall/ground relationship, key-light direction, shadow footprint, hero scale in the intended third, and copy-space bounds. A background color alone is not a lighting/staging plan.
 - Every object must have a reason to exist; every motion must have a reason to happen.
-- Signature motion must be concept-specific (a physical interaction, transformation, mechanical behavior, collision, deformation, sequential assembly, or cause-and-effect) — never a bare float/rotate/pulse/scale/fade/zoom.
+- Signature motion must follow the brief. For a restrained commercial loop, subtle camera drift or micro-motion is valid; never invent a dramatic interaction, transformation, or opening mechanism that changes the requested object state.
 - There must be a VISUAL PAYOFF: object A does X -> object B reacts Y -> produces Z, silent-readable and commercially relevant.
 - Composition is NUMERIC. Never "place on the left". Use normalized viewport fractions X/Y/W/H (0..1) with hierarchy, safe zone, negative space, and z-order.
 - Motion uses easing appropriate to the object's behavior; linear only when constant velocity is conceptually justified (progress, scan, conveyor, orbit, data stream). Physical contacts consider anticipation/impact/overshoot/settle with subtle controlled bounce (overshoot 1–5%, rebound 1–2, squash 2–5%, settle 0.10–0.30s).
-- Motion coverage is numeric: every segment must change its value (identical start and end values are rejected as dead segments), the hero must stay active past the midpoint of the clip, and changing motion must carry into the final quarter of the clip. Never park the scene in a frozen hold before the clip ends.
+- Motion coverage is numeric: every requested motion segment must change its value, but motion may remain restrained and the subject may stay visually stable when the brief asks for a calm commercial loop. Never park the scene in a frozen hold before the clip ends unless the brief explicitly requests a static hold.
 - Respect the selected timeline mode. Only LOOP clips need matching endpoint state and velocity; FINITE clips develop forward without an artificial return. Never turn a physical launch into a rubbery rise-and-fall just to make it repeat.
 - Derive a restrained, harmonious palette (base/primary/secondary/accent) from the subject — never a random rainbow.
 
@@ -378,7 +387,7 @@ concept, commercialIntent, visualMetaphor, visualHook, signatureMotion, visualPa
 - choreography: array of { "from":sec, "to":sec, "objectId":string, "property":string, "fromValue":string, "toValue":string, "easing":"linear|ease-in|ease-out|ease-in-out|spring|bounce|custom", optional "trajectory","easingSpec","physical","trigger","reaction" }
 - loop: { "durationSec":number, "fps":int, "returnMechanism":string }
 
-Make every field concrete and code-translatable.`;
+Make every field concrete and code-translatable. The brief is authoritative: do not add objects, mechanisms, states, or visual payoffs that it did not request.`;
 
 // User-facing instruction to produce the blueprint JSON.
 export function blueprintRequest(userPrompt: string, opts: { durationSec: number; fps: number; width: number; height: number; looping: boolean }): string {

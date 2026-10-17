@@ -389,7 +389,8 @@ export async function renderVideo(
   assertRenderDimensions(job.width, job.height);
   signal.throwIfAborted();
   const html = await fs.readFile(path.join(folder, `${baseName}.html`), 'utf8');
-  const validation = validateHtml(html, settings.outputFormat === 'mov-prores4444-alpha', { split: job.mode === 'split' });
+   const canvasScene = html.includes('window.__GEOF_SCENE__=scene;') && html.includes('scene.drawFrame(ctx,');
+   const validation = canvasScene ? [] : validateHtml(html, settings.outputFormat === 'mov-prores4444-alpha', { split: job.mode === 'split' });
   if (validation.length) throw new Error(`Static validation failed before capture: ${validation.join('; ')}`);
   const captureHtml = path.join(folder, `.capture-${job.id}.html`);
   const report = defaultRenderReport();
@@ -515,7 +516,7 @@ export async function renderVideo(
     const objects = (await win.webContents.executeJavaScript(
       `window.__MOTIONFORGE_OBJECTS__`,
     )) as MotionObject[] | undefined;
-    if (!Array.isArray(objects) || !objects.length)
+    if (!canvasScene && (!Array.isArray(objects) || !objects.length))
       throw new Error(
         "Runtime preflight failed: window.__MOTIONFORGE_OBJECTS__ must contain meaningful background, subject, and support metadata.",
       );
@@ -537,7 +538,7 @@ export async function renderVideo(
       job.mode === "split"
         ? { width: job.width, height: Math.round(job.height * 0.64) }
         : { width: job.width, height: job.height };
-    await optionalVisualAnalyzer("subject and geometry diagnostics", async () => {
+    if (!canvasScene) await optionalVisualAnalyzer("subject and geometry diagnostics", async () => {
       await runSubjectGeometryPreflight({
         win,
         width: job.width,
@@ -546,7 +547,7 @@ export async function renderVideo(
         mode: job.mode ?? "background",
         alpha,
         boundsViewport,
-        objects,
+        objects: objects ?? [],
         getRuntimeErrors: () => runtimeErrors,
         seek: (time) => seekAndFlush(win, time),
         captureBitmap: async () => (await win.webContents.capturePage()).toBitmap(),

@@ -5,12 +5,15 @@ import {
   adaptImportedHtml,
   checkAiProvider,
   generateBlueprint,
+  generateCanvasCode,
   generateConceptHtml,
   generateHtml,
   generateHtmlFromBlueprint,
   providerUnavailable,
   refineSingleLoop,
 } from "./ai";
+import { canvasHtml, extractJavaScript, parseCanvasMeta, validateCanvasCode } from "./canvas-scene";
+import { probeCanvas } from './canvas-probe';
 import {
   adaptationCacheMatches,
   adaptationCacheSignature,
@@ -42,7 +45,6 @@ import { normalizeThrown, type ErrorStage } from "./errors";
 import { ensureGsapRuntime } from "./gsap-runtime";
 import { installSalt, saltedSeed } from "./seed";
 import { blueprintSchema } from "./blueprint";
-import { resolveIconAssets } from "./icon-source";
 
 export class QueueService {
   jobs: Job[] = [];
@@ -112,6 +114,41 @@ export class QueueService {
     note?: string,
   ): Promise<void> {
     const job = this.previewJob(id);
+    if (job.rawResponse && /\bdraw\s*\(/.test(job.rawResponse)) {
+      const prepared = this.preparedJobs.get(id);
+      if (!prepared) throw new Error('Job is not prepared for rendering.');
+      if (kind === 'revise' && !note?.trim()) throw new Error('A revision note is required.');
+      if (kind === 'remake') job.seed = saltedSeed(crypto.getRandomValues(new Uint32Array(1))[0], installSalt());
+      const controller = this.controller && !this.controller.signal.aborted ? this.controller : (this.controller = new AbortController());
+      const rs = { ...effectiveRenderSettings(job, settings), duration: job.duration };
+      const alpha = normalizeOutputFormat(rs.outputFormat) === 'mov-prores4444-alpha';
+      let code = kind === 'revise' ? job.rawResponse : '';
+      let errors = kind === 'revise' ? [`Requested revision: ${note}. Preserve the Canvas format and unaffected scene details.`] : [];
+      try {
+        for (let attempt = 0; attempt <= settings.retryCount; attempt++) {
+          this.set(job, 'generating', 2);
+          const raw = await generateCanvasCode(rs, job.prompt, job.seed, controller.signal, code ? { code, errors } : undefined);
+          code = extractJavaScript(raw);
+          errors = validateCanvasCode(code, job.duration);
+          if (!errors.length) errors = await probeCanvas(canvasHtml(code, rs.fps, job.seed, alpha), prepared.projectFolder, job.duration, controller.signal);
+          if (!errors.length) break;
+          if (attempt === settings.retryCount) throw new Error(errors.join('; '));
+        }
+        const html = canvasHtml(code, rs.fps, job.seed, alpha);
+        await saveProject(job, html, prepared.projectFolder, prepared.baseName);
+        const meta = parseCanvasMeta(code);
+        rs.looping = meta.loop;
+        job.looping = meta.loop;
+        Object.assign(job, { rawResponse: code, htmlPath: path.join(prepared.projectFolder, `${prepared.baseName}.html`), title: meta.title, keywords: meta.keywords, category: meta.category, error: undefined });
+        prepared.renderSettings = rs;
+        await this.parkForPreview({ job, html, renderSettings: rs, signal: controller.signal, projectFolder: prepared.projectFolder, baseName: prepared.baseName, alpha, isHf: false, isSplit: false });
+      } catch (error) {
+        job.error = (error as Error).message;
+        this.set(job, controller.signal.aborted ? 'stopped' : 'failed', job.progress);
+        throw error;
+      }
+      return;
+    }
     if (!job.blueprint) throw new Error("Revise and remake need a blueprint job.");
     if (kind === "revise" && !note?.trim()) throw new Error("A revision note is required.");
     const prepared = this.preparedJobs.get(id);
@@ -346,6 +383,8 @@ export class QueueService {
       "projects",
       path.basename(batchFolder),
     );
+    const htmlFolder = path.join(batchFolder, "html");
+    await fs.mkdir(htmlFolder, { recursive: true });
     await this.cleanupProjects(settings.retentionDays);
     const names = new Map<string, number>();
     const work = pending.map((job) => {
@@ -544,6 +583,8 @@ export class QueueService {
     baseName: string,
   ) {
     const started = Date.now();
+    const htmlFolder = path.join(batchFolder, "html");
+    await fs.mkdir(htmlFolder, { recursive: true });
     let retries = 0;
     const renderSettings = effectiveRenderSettings(job, settings);
     try {
@@ -616,53 +657,36 @@ export class QueueService {
         }
         if (signal.aborted) throw signal.reason || new Error("Stopped.");
       } else {
-        this.log("info", "Prompt accepted", job.id);
+        this.log("info", "Prompt accepted · free-scene Canvas generation", job.id);
         this.set(job, "generating", 2);
-        if (isConcept) {
-          html = await this.waitForProvider(
-            job,
-            signal,
-            () => generateConceptHtml(renderSettings, job.conceptData!, job.seed, signal),
-            () => checkAiProvider(renderSettings),
-          );
-          job.rawResponse = html;
-          this.log("info", "AI connected · Concept HTML generated", job.id);
-        } else {
-          // Two-AI hybrid: Creative Director (blueprint) -> Coder (HTML from scratch).
-          this.log("info", "Creative Director drafting production blueprint", job.id);
-          const blueprint = await this.waitForProvider(
-            job,
-            signal,
-            () => generateBlueprint(renderSettings, job.prompt, job.seed, signal),
-            () => checkAiProvider(renderSettings),
-          );
-          job.blueprint = blueprint;
-          this.log("info", `Blueprint ready: hero #${blueprint.heroObjectId} · ${blueprint.objects.length} objects · ${blueprint.choreography.length} motion segments`, job.id);
-          // Fase 2a: resolve fresh vector assets for every non-background object.
-          // Failures degrade to the geometry-lock path; they never fail the job.
-          try {
-            job.iconAssets = await resolveIconAssets(blueprint, {
-              ledgerPath: path.join(this.paths.userData, "icon-usage.json"),
-              seed: job.seed,
-            });
-          } catch (error) {
-            job.iconAssets = [];
-            this.log("warning", `Object asset search unavailable: ${(error as Error).message}`, job.id);
-          }
-          if (job.iconAssets.length)
-            this.log("info", `Object assets: ${job.iconAssets.map((a) => `#${a.objectId} <- ${a.set}:${a.name}`).join(" · ")}`, job.id);
-          else this.log("info", "Object assets: none matched; coder draws from the geometry lock", job.id);
-          this.set(job, "generating", 5);
-          this.log("info", "Coder translating blueprint to HTML", job.id);
-          html = await this.waitForProvider(
-            job,
-            signal,
-            () => generateHtmlFromBlueprint(renderSettings, blueprint, job.seed, signal, undefined, job.iconAssets, isSplit, isHf),
-            () => checkAiProvider(renderSettings),
-          );
-          job.rawResponse = html;
-          this.log("info", "AI connected · Blueprint HTML generated", job.id);
+        const expectedDuration = renderSettings.duration === 11 || renderSettings.duration === 12 ? renderSettings.duration : 10;
+        let code = "";
+        let canvasErrors: string[] = [];
+        for (;;) {
+          const raw = await this.waitForProvider(job, signal, () => generateCanvasCode(renderSettings, job.prompt, job.seed, signal, code ? { code, errors: canvasErrors } : undefined, message => this.log('info', message, job.id)), () => checkAiProvider(renderSettings));
+          code = extractJavaScript(raw, expectedDuration);
+          job.rawResponse = code;
+          const errors = validateCanvasCode(code, expectedDuration);
+          if (!errors.length) errors.push(...await probeCanvas(canvasHtml(code, renderSettings.fps, job.seed, alpha), projectFolder, expectedDuration, signal));
+          canvasErrors = errors;
+          if (!errors.length) break;
+          if (retries >= settings.retryCount) throw new Error(`Canvas code validation failed: ${errors.join("; ")}`);
+          retries++; job.retryCount = retries;
+          const snippet = code.replace(/\s+/g, " ").slice(0, 120);
+          this.log("warning", `Canvas validation failed: ${errors.join("; ")} · extracted ${code.length} chars · starts "${snippet}" · Retry ${retries}/${settings.retryCount}`, job.id);
         }
+        job.rawResponse = code;
+        job.duration = parseCanvasMeta(code).duration || expectedDuration;
+        renderSettings.duration = job.duration;
+        job.looping = parseCanvasMeta(code).loop;
+        renderSettings.looping = job.looping;
+        this.log("info", "AI connected · Canvas scene code generated", job.id);
+        html = canvasHtml(code, renderSettings.fps, job.seed, alpha);
+        await fs.mkdir(htmlFolder, { recursive: true });
+        await fs.writeFile(path.join(htmlFolder, `${baseName}.html`), html, "utf8");
+        job.output = batchFolder; job.projectPath = projectFolder; job.baseName = baseName; job.htmlPath = await saveProject(job, html, projectFolder, baseName); job.videoPath = path.join(batchFolder, `${baseName}.mp4`);
+        await this.parkForPreview({ job, html, renderSettings, signal, projectFolder, baseName, alpha, isHf, isSplit });
+        return { job, batchFolder, projectFolder, baseName, started, retries, renderSettings };
       }
       let iconMarkerFailures = 0;
       while (true) {
@@ -723,6 +747,11 @@ export class QueueService {
         job.rawResponse = html;
       }
       const validatedHtml = html;
+      // Keep the exact generated source available in the output batch before
+      // Chromium/HyperFrames rendering. This is the inspectable source of
+      // truth for every prompt, independent of artifact mode.
+      await fs.mkdir(htmlFolder, { recursive: true });
+      await fs.writeFile(path.join(htmlFolder, `${baseName}.html`), validatedHtml, "utf8");
       // A blueprint already owns choreography. An unrelated second director pass
       // previously rewrote its geometry and contradicted its RAF timing contract.
       if (!job.blueprint && !imported) {
@@ -798,6 +827,8 @@ export class QueueService {
           job.id,
         );
       html = finalHtml;
+      await fs.mkdir(htmlFolder, { recursive: true });
+      await fs.writeFile(path.join(htmlFolder, `${baseName}.html`), html, "utf8");
       if (imported) {
         const sourcePath = job.sourceHtmlPath || job.importedSourcePath!,
           adaptedPath = path.join(path.dirname(sourcePath), "adapted.html"),
@@ -889,7 +920,8 @@ export class QueueService {
       let attemptStartedAt = 0;
       let qualityReport: RenderReport | undefined;
       let lastQualityError: string | undefined;
-      let html = job.rawResponse ?? (job.htmlPath ? await fs.readFile(job.htmlPath, "utf8") : "");
+      const canvasJob = !!job.rawResponse && !job.rawResponse.includes('<html') && /\b(?:function\s+draw\s*\(|(?:const|let|var)\s+draw\s*=)/.test(job.rawResponse);
+      let html = canvasJob ? canvasHtml(job.rawResponse!, renderSettings.fps, job.seed, renderSettings.outputFormat === 'mov-prores4444-alpha') : job.rawResponse ?? (job.htmlPath ? await fs.readFile(job.htmlPath, "utf8") : "");
       const renderOnce = async () => {
         this.log("info", isHf ? "Renderer available · Launching HyperFrames CLI" : "Renderer available · Launching Chromium", job.id);
         this.set(job, "rendering", 10);
@@ -931,7 +963,7 @@ export class QueueService {
         try {
           if (attempt > 1 && html) {
             // Re-render the regenerated scene.
-            job.rawResponse = html;
+            if (!canvasJob) job.rawResponse = html;
             await saveProject(job, html, projectFolder, baseName);
           }
           qualityReport = await renderOnce();
@@ -954,6 +986,18 @@ export class QueueService {
             job.id,
           );
           if (signal.aborted) throw signal.reason || new Error("Stopped.");
+          if (canvasJob) {
+            const code = extractJavaScript(await generateCanvasCode(renderSettings, job.prompt, job.seed, signal, { code: job.rawResponse!, errors: qualityErrors }));
+            const errors = validateCanvasCode(code, job.duration);
+            const candidate = errors.length ? '' : canvasHtml(code, renderSettings.fps, job.seed, renderSettings.outputFormat === 'mov-prores4444-alpha');
+            if (!errors.length) errors.push(...await probeCanvas(candidate, projectFolder, job.duration, signal));
+            if (errors.length) { qualityErrors.push(...errors); continue; }
+            job.rawResponse = code;
+            job.looping = parseCanvasMeta(code).loop;
+            renderSettings.looping = job.looping;
+            html = candidate;
+            continue;
+          }
           const repair = { html, errors: [...qualityErrors], frames: (error as RenderQualityError).frames };
           const candidate = await this.waitForProvider(job, signal, () =>
             job.blueprint
@@ -1010,8 +1054,13 @@ export class QueueService {
         ),
         finalVideo,
       );
+      const canvasMeta = job.rawResponse?.includes("// TITLE:") ? parseCanvasMeta(job.rawResponse) : null;
       const metadata = {
         prompt: job.prompt,
+        title: canvasMeta?.title,
+        keywords: canvasMeta?.keywords,
+        category: canvasMeta?.category,
+        loop: canvasMeta?.loop,
         seed: job.seed,
         generationTimeMs: Date.now() - started,
         duration: job.duration,
@@ -1163,10 +1212,6 @@ export function effectiveRenderSettings(
     motionStyle: job.motionStyle ?? settings.motionStyle,
     outputFormat: normalizeOutputFormat(job.outputFormat),
     encodeAnywayLarge: job.encodeAnywayLarge === true,
-    model:
-      job.model?.trim() ||
-      job.generationModel?.trim() ||
-      job.refinementModel?.trim() ||
-      settings.model,
+    model: settings.model,
   };
 }

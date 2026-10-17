@@ -68,6 +68,14 @@ export function validateHtml(html: string, alpha=false, options?: { requireGsap?
     ? html.replace(/<script\b[^>]*\bsrc=(["'])gsap\.min\.js\1[^>]*>\s*<\/script\s*>/gi, '<script></script>')
     : html;
   if (/<script\b[^>]*src=/i.test(srcChecked)) errors.push('External scripts are not allowed');
+  if (/data-bm-icon\s*=|(?:material-symbols|font-awesome|lucide|tabler)[/:_-]/i.test(html))
+    errors.push('Icon assets are disabled: draw the requested subject with custom SVG/DOM geometry');
+  if (new RegExp(`(?:html|body|svg|canvas|#(?:stage|scene))[^{}]*\\{[^}]*\\b(?:width|height)\\s*:\\s*${2560}px`, 'i').test(html))
+    errors.push('Fixed design-pixel CSS dimensions can blank the render; use width:100%, height:100%, with viewBox/internal coordinates for the design size');
+  if (new RegExp(`<meta[^>]+name=["']viewport["'][^>]+width\\s*=\\s*${2560}`, 'i').test(html))
+    errors.push('Viewport meta tag must not use the design-pixel width');
+  if (/id=["']primary-subject["'][\s\S]{0,12000}gsap\.to\s*\(\s*["']#primary-subject["'][\s\S]{0,500}\bx\s*:/i.test(html) && !/(?:camera|parallax|depth)[-_](?:wrapper|layer)|id=["'][^"']*(?:camera|parallax|depth)[^"']*/i.test(html))
+    errors.push('Camera motion must use a camera/depth wrapper, not a single whole-subject x tween');
   errors.push(...validateObjectMetadata(html));
   // The injected GSAP runtime is host-owned, vendored source: pattern and syntax checks
   // grade the LLM-authored document only (the minified source legitimately contains

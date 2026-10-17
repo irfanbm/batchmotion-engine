@@ -191,7 +191,12 @@ export async function resolveIconAssets(
 // are injection targets. Self-closed and unclosed markers are repaired on the fly.
 export function injectIconAssets(html: string, assets?: IconAsset[]): string {
   if (!assets?.length) return html;
-  let out = html;
+  // Models sometimes emit resolved asset markers as stray body-level SVGs even
+  // when they already drew the requested subject with custom geometry. Those
+  // glyphs become accidental extra objects in the final scene. Keep markers
+  // only when they are nested in a scene element; direct body children are
+  // reference artifacts and must not be rendered.
+  let out = html.replace(/(>\s*)<svg\s+data-bm-icon="[^"]+"[^>]*>[\s\S]*?<\/svg>(?=\s*(?:<script|<\/body))/gi, '$1');
   for (const asset of assets) {
     const needle = `data-bm-icon="${asset.set}:${asset.name}"`;
     let at = -1;

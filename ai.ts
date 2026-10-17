@@ -43,6 +43,34 @@ function textDirectives(all: string): string {
 import { ZodError } from 'zod';
 export function outputContract(settings:Settings){return settings.outputFormat==='mov-prores4444-alpha'?`ALPHA OUTPUT: html, body, and canvas must be transparent. No background panel/backdrop/vignette/full-frame gradient/opaque wash/checkerboard or background metadata object. Subject/support remain opaque or intentionally semi-transparent; preserve soft-edge/glow alpha. Never flatten against black/white. Native transparency only; no background removal.`:`OPAQUE OUTPUT: use a full-bleed opaque background and existing full-canvas coverage.`}
 
+export async function generateCanvasCode(settings: Settings, concept: string, seed: number, signal?: AbortSignal, repair?: { code: string; errors: string[] }, onProgress?: (message: string) => void): Promise<string> {
+  const duration = settings.duration === 11 || settings.duration === 12 ? settings.duration : 10;
+  const system = buildGefootPrompt(concept, duration as 10 | 11 | 12, settings.fps, seed, settings.outputFormat === 'mov-prores4444-alpha');
+  const task = repair
+    ? `The previously generated JavaScript failed validation:\n${repair.errors.map((x) => `- ${x}`).join('\n')}\n\nReturn the COMPLETE corrected response as ONE javascript code block only. The response MUST begin with these five comment lines before any function:\n// TITLE: <max 70 characters>\n// KEYWORDS: <exactly 48 unique comma-separated English keywords>\n// CATEGORY: <1-20>\n// DURATION: ${duration}\n// LOOP: <yes or no>\n\nThen define exactly:\nfunction setup(env) { ... }\nfunction draw(ctx, t, env) { ... }\n\nPrevious code:\n\`\`\`javascript\n${repair.code}\n\`\`\``
+    : system;
+  return await requestHtml(settings, repair ? `${system}\n\n${task}` : task, signal, 0.45, false, 'You are a helpful assistant. Follow the user’s Canvas scene specification.', undefined, onProgress);
+}
+
+const antiSlopMotionContract = `ANTI-SLOP MOTION QUALITY CONTRACT:
+- Build one intentional focal subject from the user's actual noun. No generic substitute, decorative filler, random particles, abstract blobs, or extra objects added to make the frame feel busy.
+- Every visible shape must explain the object's construction, material, lighting, depth, attachment, or requested motion. Remove any shape that has no job.
+- Commercial illustration quality requires three value layers on the hero: a readable base material, a directional key-light plane or restrained highlight, and a contact/occlusion layer. Use these to clarify form, not to decorate it with random gradients.
+- COMMERCIAL STAGING: do not leave the scene as a flat full-frame color field. Unless the brief explicitly requests a flat isolated background, build a quiet studio stage with a warm wall/ground separation, an extremely restrained floor plane or horizon cue, one broad upper-left key-light falloff, a soft hero footprint shadow, and tighter contact shadows beneath the desktop and laptop. Keep the stage subtle enough for copy space but strong enough to anchor the object.
+- SELLING SILHOUETTE: the hero must occupy a confident visual scale in its intended third. For a desk/laptop stock composition, the desk assembly should be large enough to read immediately at thumbnail size, with a clear tabletop silhouette, readable leg rhythm, and visible laptop contrast. Do not shrink the subject to preserve empty space; preserve the right-side copy space by placement and scale discipline.
+- MATERIAL CONTRAST: use restrained but visible separation between warm wood desktop, cool charcoal/metal frame, and dark laptop. Each material gets a base tone, one directional highlight, and one occlusion/depth tone. Avoid near-identical fills across adjacent faces and avoid a single flat gray value for the whole hero.
+- LIGHTING ORDER: establish broad light first, then object planes, then contact/ambient occlusion, then only one or two crisp edge accents. Do not use decorative sage lines or arbitrary strokes as a substitute for lighting or construction.
+- Separate visual layers by depth when the brief asks for depth: background/ground, rear supports, hero assembly, foreground edges, and copy space. Each depth layer must have a distinct group and a measurable motion multiplier if parallax is requested.
+- Use a restrained, coherent palette and a clear material language. Do not stack gradients, glows, outlines, highlights, shadows, and polygons without a physical or compositional reason.
+- The first frame must be a resolved still illustration. A reviewer must recognize the requested object before animation begins.
+- Keep the stage geometry independent from the browser viewport: root SVG/canvas is 100% wide/high with a fixed viewBox/internal design coordinate system. Do not use 100vw/100vh on the artwork itself, because capture and preview can have different aspect ratios.
+- Preserve explicit states exactly. Do not open a closed object, add a screen to a closed laptop, animate a static object, or invent an interaction not requested.
+- Keep copy space genuinely quiet. Do not fill it with particles, labels, decorative marks, or hidden geometry.
+- Motion has a declared purpose: camera drift establishes life; local motion affects only the named part; all moving parts remain attached and return to their exact initial state at the loop boundary.
+- Motion translation is auditable: camera horizontal movement acts on a camera wrapper or coordinated depth wrappers; parallax moves at least two named depth layers at different bounded rates; a requested part motion targets that part's group; a loop uses one paused timeline and exact time-based values, never only a whole-scene x shift disguised as camera motion.
+- Declare the scene's dials internally as ENERGY 1, RHYTHM 1, MOTION 1 for a calm commercial stock loop unless the prompt explicitly requests otherwise. This is a filter for intentionality, not a license to make the scene sterile.
+- Before output, perform a self-review: subject recognizable, state correct, geometry connected, proportions plausible, no accidental objects, copy space preserved, frame covered, first/last state equal, and no runtime blank frame.`;
+
 export const mandatoryRuntimeSkeleton = `MANDATORY RUNTIME SKELETON (use this exact control flow at the end of the script):
 // GSAP is provided by the host: the global gsap exists before this script runs.
 // Never load, paste, or import GSAP yourself.
@@ -336,7 +364,7 @@ function emptyResponseDetails(value: unknown, contentType: string, length: numbe
   return `content-type=${contentType || 'unknown'}, bytes/chars=${length}, top-level-keys=${Object.keys(root).slice(0, 12).join(',') || 'none'}, first-choice-keys=${choice && typeof choice === 'object' ? Object.keys(choice).slice(0, 12).join(',') || 'none' : 'none'}, message-keys=${message && typeof message === 'object' ? Object.keys(message).slice(0, 12).join(',') || 'none' : 'none'}`;
 }
 
-export async function readSseContent(response: Response, onProgress?: () => void, stallMs = 120_000): Promise<string> {
+export async function readSseContent(response: Response, onProgress?: (stats?: { received: number; content: number }) => void, stallMs = 120_000): Promise<string> {
   const contentType = response.headers.get('content-type') || '';
   if (contentType.toLowerCase().includes('application/json')) {
     const raw = await response.text();
@@ -377,8 +405,9 @@ export async function readSseContent(response: Response, onProgress?: () => void
         const choice = event.choices?.[0];
         if (choice?.finish_reason) finish = choice.finish_reason;
         const delta = choice?.delta?.content;
-        if (delta) { content += delta; onProgress?.(); }
+        if (delta) { content += delta; }
       }
+      onProgress?.({ received: wire.length, content: content.length });
     }
   } finally { await reader.cancel().catch(() => {}); }
   // A final SSE line without a trailing newline still carries content/finish_reason.
@@ -407,14 +436,28 @@ export async function readSseContent(response: Response, onProgress?: () => void
   return content;
 }
 
-async function requestHtml(settings: Settings, task: string, signal?: AbortSignal, temperature=.25, appendSkeleton = true, systemOverride?: string, images?: string[]): Promise<string> {
+async function requestHtml(settings: Settings, task: string, signal?: AbortSignal, temperature=.25, appendSkeleton = true, systemOverride?: string, images?: string[], onProgress?: (message: string) => void): Promise<string> {
   const url=`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`;
   const userTask = appendSkeleton ? `${task}\n\nFINAL MANDATORY CHECK (this is the last instruction before output):\n${mandatoryRuntimeSkeleton}` : task;
   const body=JSON.stringify({model:settings.model,temperature,stream:true,messages:[{role:'system',content:systemOverride ?? `${system}\n${outputContract(settings)}`},{role:'user',content:buildObservationMessage(userTask, images ?? [])}] });
   for(let attempt=0;attempt<3;attempt++)try{
-    const response=await fetch(url,{method:'POST',signal:AbortSignal.any([...(signal?[signal]:[]),AbortSignal.timeout(1_800_000)]),headers:{'content-type':'application/json',authorization:`Bearer ${settings.apiKey}`},body});
+    onProgress?.(`Waiting for AI provider · ${settings.model} · attempt ${attempt + 1}/3 · request limit 5 minutes`);
+    const response=await fetch(url,{method:'POST',signal:AbortSignal.any([...(signal?[signal]:[]),AbortSignal.timeout(300_000)]),headers:{'content-type':'application/json',authorization:`Bearer ${settings.apiKey}`},body});
     if(!response.ok){if(transientAiStatus(response.status)&&attempt<2){await wait(1000*2**attempt,signal);continue}throw await providerError(response)}
-    return extractHtml(await readSseContent(response));
+    onProgress?.(`AI provider connected · HTTP ${response.status} · ${response.headers.get('content-type') || 'unknown content type'}`);
+    const started = Date.now();
+    let received = 0, content = 0, lastData = started;
+    const heartbeat = setInterval(() => {
+      onProgress?.(`AI response · ${Math.round((Date.now() - started) / 1000)}s elapsed · received ${received} chars · scene ${content} chars · ${Math.round((Date.now() - lastData) / 1000)}s since data${content ? '' : ' · no scene code yet'}`);
+    }, 15_000);
+    try {
+      const result = await readSseContent(response, stats => {
+        lastData = Date.now();
+        if (stats) { received = stats.received; content = stats.content; }
+      });
+      onProgress?.(`AI response complete · ${result.length} chars · ${Math.round((Date.now() - started) / 1000)}s · extracting scene`);
+      return extractHtml(result);
+    } finally { clearInterval(heartbeat); }
   }catch(error){if(signal?.aborted)throw error;if(attempt<2&&(error instanceof TypeError||/fetch failed|stream stalled/i.test(String((error as Error).message)))){await wait(1000*2**attempt,signal);continue}throw error}
   throw new Error('AI request failed after 3 attempts.');
 }
@@ -449,7 +492,7 @@ export async function generateHtml(settings: Settings, prompt: string, seed: num
         fps: settings.fps,
         contracts: [interpretationContract, motionDirection[settings.motionStyle], contextualPacingContract, timingContract(settings.looping), professionalContract, stageQualityContract],
       });
-  return requestHtml(settings, `${outputContract(settings)}\n${task}`, signal);
+  return requestHtml(settings, `${outputContract(settings)}\n${recipeForBlueprint(prompt)}\n${task}`, signal);
 }
 
 export async function refineSingleLoop(settings: Settings, html: string, signal?: AbortSignal): Promise<string> {
@@ -528,7 +571,16 @@ ${conceptRuntimeSkeleton}`;
 
 // ---- Two-AI hybrid pipeline: Creative Director (blueprint) -> Coder (HTML) ----
 import { blueprintRequest, blueprintQualityGate, blueprintToCoderBrief, creativeDirectorSystem, normalizeBlueprint, type Blueprint } from './blueprint';
-import { injectIconAssets, type IconAsset } from './icon-source';
+import { buildGefootPrompt } from './canvas-scene';
+import { recipeForBlueprint } from './scene-recipe';
+
+const gefootCreativeContract = `
+GEFOOT-STYLE CREATIVE CONTRACT (apply the visual thinking, adapted to Batchmotion HTML output):
+You are a senior motion designer and creative coder making one polished commercial stock-footage clip. The concept is the authority. Make a strong art-direction decision without asking questions. Build a resolved visual, not a wireframe or coding demo.
+VISUAL QUALITY: use a full-bleed 16:9 composition, one focal subject, intentional copy space, readable silhouette at thumbnail size, three deliberate depth layers, directional lighting, rich but restrained gradients, varied opacity, soft contact shadows, and small believable construction details. Paint the background/stage first. Real-world objects must be tactile: layered solids, material base, directional highlight, darker inner edge, contact shadow, and attached parts. Simplify difficult forms rather than producing broken pseudo-3D geometry.
+MOTION QUALITY: choose motion from the concept. Ambient scenes loop; finite sequences end cleanly. Motion must be visible but calm, physically plausible, and directly tied to named parts. Use exact time-based values on the single host-controlled paused timeline. The same time must always produce the same frame; no accumulated state, random calls, timers, clocks, requestAnimationFrame, performance.now, Date, or DOM events. For loops, first and last frame are identical.
+OUTPUT DISCIPLINE: preserve the exact requested subject, state, composition, palette intent, and named movement. Do not invent text, logos, data, UI, objects, particles, filler, or decorative marks without a compositional role. Runtime code is subordinate to visual quality; use the host's GSAP/timeline contract rather than spending visual budget on a custom runtime.
+`;
 
 async function requestJson<T>(settings: Settings, systemContent: string, userContent: string, parse: (v: unknown) => T, signal?: AbortSignal, temperature = 0.4): Promise<T> {
   settings = { ...settings, model: resolveAiModel(settings) };
@@ -643,7 +695,7 @@ export function hyperframesComposerContract(settings: Settings): string {
   const d = settings.duration;
   return `HYPERFRAMES COMPOSITION CONTRACT (standalone index.html; rendered by the HyperFrames engine):
 - Root: <div id="root" data-composition-id="main" data-start="0" data-width="${settings.width}" data-height="${settings.height}" data-duration="${d}"> directly in <body> (never wrapped in <template>). Root CSS width/height 100%. Canvas size comes from data-width/data-height only; never hardcode ${settings.width}px/${settings.height}px on #root.
-- html and body keep margin:0, width:100%, height:100%, overflow:hidden, no scrollbars, and cover the whole viewport. ${settings.outputFormat === 'mov-prores4444-alpha' ? 'ALPHA OUTPUT: keep the root and unused canvas transparent; no washes, panels, or full-frame fills.' : 'OPAQUE OUTPUT: one full-bleed opaque ground covers the viewport.'}
+- html and body keep margin:0, width:100%, height:100%, overflow:hidden, no scrollbars, and cover the whole viewport. Any svg/canvas/stage root must use display:block; width:100%; height:100%; and its viewBox or internal coordinate system carries the ${settings.width}x${settings.height} design size. Never set html, body, svg, canvas, #stage, or #scene to fixed ${settings.width}px/${settings.height}px CSS dimensions; never use a viewport meta tag with width=${settings.width}. ${settings.outputFormat === 'mov-prores4444-alpha' ? 'ALPHA OUTPUT: keep the root and unused canvas transparent; no washes, panels, or full-frame fills.' : 'OPAQUE OUTPUT: one full-bleed opaque ground covers the viewport.'}
 - Exactly ONE paused gsap timeline registered as window.__timelines["main"]. Open the script with \`window.__timelines = window.__timelines || {};\` then \`const tl = gsap.timeline({ paused: true });\`. All tweens at absolute times; seeded PRNG init-only; no timers, clocks, random, or network.
 - GSAP is provided by the host: reference the global gsap; load it ONLY via a paired <script src="gsap.min.js"></script> tag as the first element of <head> (the host stages this exact file next to the composition; never CDN, never inline, never another path or filename).
 - Timed sections carry class="clip" with data-start + data-duration. Never tween display, visibility, or autoAlpha on a .clip (the framework owns clip visibility); animate inner elements. Never pair a CSS initial transform with a GSAP tween on the same property (use fromTo, or xPercent/yPercent for centering).
@@ -654,19 +706,48 @@ export function hyperframesComposerContract(settings: Settings): string {
 }
 
 // Step 2: Coder translates the blueprint into ONE deterministic HTML file from scratch.
-export async function generateHtmlFromBlueprint(settings: Settings, bp: Blueprint, seed: number, signal?: AbortSignal, repair?: {html: string; errors: string[]; frames?: string[]}, icons?: IconAsset[], split?: boolean, hyperframes?: boolean): Promise<string> {
+export async function generateHtmlFromBlueprint(settings: Settings, bp: Blueprint, seed: number, signal?: AbortSignal, repair?: {html: string; errors: string[]; frames?: string[]}, _icons?: unknown[], split?: boolean, hyperframes?: boolean): Promise<string> {
   const brief = blueprintToCoderBrief(bp);
-  const assetBlock = icons?.length ? `
+  const sceneRecipe = recipeForBlueprint(brief);
+  const assetBlock = `
 
-OBJECT ASSETS (vector geometry from a licensed set; the HOST injects the shapes, you never type path data):
-${icons.map((a) => `- #${a.objectId} = ${a.set}:${a.name} (${a.license}), viewBox ${a.viewBox}\n  Emit an empty marker exactly: <svg data-bm-icon="${a.set}:${a.name}" viewBox="${a.viewBox}"></svg>`).join('\n')}
-Rules for every OBJECT ASSET: place the marker as the content of the element carrying that object id (the <svg> may carry the id itself). The host fills the marker's shapes verbatim before rendering, so the interior is host-owned: do not add, edit, or replace anything inside it, and never draw the object yourself. Size the marker through its wrapper (width/height in px or %), keep the viewBox unchanged, and animate transforms on the wrapper or the <svg>. Size the wrapper to the glyph's own aspect ratio: a square viewBox gets a square wrapper, never a wide empty box. Place badges, labels and callouts relative to the visible glyph, not to empty wrapper margins, and keep the composed result inside the 5% safe margin. Parent a badge, tag or callout INSIDE its object's wrapper (or animate it to follow the object) so it never floats in empty space while the object is still entering the frame. Material treatment (highlight/shadow layers) goes around the marker, not inside it. FINAL CHECK: every marker above appears exactly once as a paired <svg data-bm-icon="set:name">...</svg>.` : '';
+CUSTOM GEOMETRY CONTRACT:
+Build every requested subject from purpose-built SVG/DOM geometry. Do not use icon libraries, icon assets, data-bm-icon markers, external icon dependencies, or generic pictograms.
+GEOMETRY QUALITY RULES:
+- Treat the prompt's noun and state as a hard specification, not a loose mood reference. A closed laptop must visibly be closed at the neutral frame; do not invent an open lid, screen, keyboard, or floating panels.
+- Construct recognizable objects from a small number of coherent connected solids with consistent perspective. Every leg, support, hinge, lid, edge, and attached part must visibly connect to its parent; avoid unrelated polygons, tangled overlaps, arbitrary trapezoids, and decorative strokes pretending to be form.
+- Use a believable scale hierarchy: furniture is the primary silhouette, its top is thin relative to its width, legs reach the underside, and a laptop is clearly smaller than the desktop and rests on it.
+- Establish the neutral still frame first. The first frame must already look like the requested commercial illustration before any motion is applied. Use material fills, one restrained highlight/shadow per solid, and soft contact shadows rather than extra geometry.
+- Keep perspective consistent across the complete object. Do not let the tabletop, legs, and laptop use incompatible vanishing directions or unrelated coordinate systems.
+- Separate only parts that genuinely move. Put the pivot at the real hinge/joint. Motion must preserve attachment and must return to the exact initial position, rotation, and opacity at the loop boundary.
+- If the prompt requests a closed or static object, animate only the requested subtle scene/camera motion; do not animate the object's state or open a closed component.
+- Parent rule: an object resting on furniture must be inside the furniture assembly or receive the exact same parent transform. Never place the laptop in an unrelated viewport transform; its bottom contact edge must be projected onto the desktop top plane and inherit the desk's camera drift.
+- A closed laptop is a rigid closed assembly: do not rotate or translate only #laptop-lid. If the brief asks for subtle laptop motion, animate the complete #closed-laptop group or use a light/contact-shadow response. A lid rotation is allowed only when the prompt explicitly requests opening/closing and the neutral state supports it.
+- FURNITURE RECIPE when the brief names a desk/table: construct one coherent assembly in this order: a thin desktop slab with a visible top plane, front edge/fascia, and underside; a restrained underside support/apron or mounting points; two clearly attached front/rear leg assemblies with consistent perspective and visible feet; one contact shadow directly below the footprint; then place the laptop on the top plane with a small believable inset from the front and side edges. Do not draw four floating vertical bars.
+- CLOSED LAPTOP RECIPE: use one low, rounded or chamfered base slab with a top plane, thin front/side edge, and a restrained contact shadow. Do not draw an open screen, keyboard, display rectangle, hinge animation, or a long unrelated quadrilateral. If a lid is present, it lies flush against the base in the neutral frame and shares the same perspective; animate no lid opening unless explicitly requested.
+- COMPOSITION RECIPE for left-third placement: keep the complete desk footprint inside the left third with comfortable margins, scale the desk as a recognizable hero rather than a tiny diagram, and leave the right two-thirds visually quiet. Do not use the copy space to compensate for weak geometry.
+- ANATOMY/PERSPECTIVE PASS before writing SVG: first decide the camera elevation and azimuth, the horizon/vanishing direction, the visible top/front/side faces, and one local coordinate system. Project every solid into that same system. Receding edges of the desktop, fascia, feet, and laptop must agree; vertical supports remain attached to the underside and terminate at feet on the same ground plane.
+- SOLID CONSTRUCTION: for parallel rectangular furniture/products, choose one shared affine projection P(x,y,z)=O+x*U+y*V-z*W. U and V are the two ground-plane axes; W is vertical. Use that same projection for desktop, laptop, rails, legs and feet. Do not independently invent screen coordinates for each polygon. If perspective convergence is requested instead, use one shared camera projection for every vertex, not a mixture of affine and perspective projections.
+- CLOSED SLAB: derive every tabletop and closed-laptop face from the same eight corners. For top corners A=P(0,0,h), B=P(w,0,h), C=P(w,d,h), D=P(0,d,h), derive lower corners a,b,c,d by adding the SAME projected thickness vector t*W. Draw the top ABCD and each camera-facing side using its corresponding shared edge, e.g. ABba and BCcb. Adjacent faces must share exact vertices, have nonzero area, and filled material colors. Never use fill="none" as a substitute for a solid side face. Choose camera-facing edges from the camera orientation, not arbitrary names like right/front.
+- LAPTOP ALIGNMENT: locate its footprint using desk-local x/y coordinates inside the tabletop bounds, lift its lower face to desktop height, then construct its base and shut lid as stacked closed slabs in the SAME projection. The laptop U/V directions must equal the desktop U/V directions unless the brief explicitly rotates the laptop on the desk. Include both visible side faces with enough projected thickness to remain readable at output resolution.
+- OCCLUSION PASS: depth-sort whole solids first and their faces second. Finish all desktop faces before drawing the laptop contact shadow/base/lid that rests above them; never paint a desktop fascia over a laptop as a final global overlay. Render back supports before foreground supports. Do not hide attachment points with arbitrary overlays. Use overlap only where it communicates depth.
+- PROPORTION PASS: compare every part against the hero bounds before styling. A desktop is wider than it is thick; legs are narrower than the desktop and reach from underside to ground; a closed laptop has a visible body thickness and is substantially smaller than the desktop; gaps must be intentional and consistent.
+- DESK DIMENSIONS BEFORE PROJECTION: for a normal seated office desk (unless the brief explicitly specifies a standing desk or different dimensions), use a coherent physical envelope: width 140-160 cm, depth 65-80 cm, total height 72-76 cm, desktop thickness 2-3 cm, metal leg section 3-5 cm. Choose one set, such as 150x75x74 cm, and project ALL parts with the shared camera. Leg length is total height minus slab thickness and mounting allowance, never chosen independently from the hero's screen rectangle.
+- DESK SCREEN SANITY CHECK: with the shallow three-quarter view used for a left-composed office desk, visible underside-to-floor height should normally be about 0.42-0.58 of the projected desktop long-edge width, not near 1.0. If the result looks like a tall bar table, correct physical dimensions first; do not change the accepted camera angle, squash the whole assembly, or merely move the feet without updating legs, rails, ground contacts and shadows. At a projected long-edge width of 618 px, a roughly 290-350 px leg drop is a useful sanity range, not a universal perspective law.
+- CONTINUITY CHECK BEFORE STYLING: construct a single desk assembly from named anchors, not independent screen-space guesses. Define desktop underside anchors first; start every leg/apron/support at those exact projected anchors; end every leg at a shared ground plane; define the laptop bottom contact edge from the projected desktop top plane. For every attachment, the endpoint distance must be zero or hidden by a deliberate overlap of at most the part thickness. A visible empty gap between tabletop and supports, or between laptop and tabletop, is a failed scene even if every element exists.
+- ASSEMBLY BOUNDS CHECK: the union of tabletop, supports, legs, feet, and laptop must form one connected silhouette/assembly. Keep the laptop within the tabletop footprint after projection. Do not position the laptop by an unrelated absolute y value. Do not let a shadow imply a surface at a different height than the object it supports.
+- Preserve camera orientation while correcting proportions. Fit the complete physically proportioned assembly into composition bounds by uniform scaling and translation only. Never stretch height independently to fill a blueprint rectangle. Place a closed laptop about 30-36 cm wide and 20-25 cm deep on this desk; derive its projected size from the same scale rather than inventing a separate screen-space aspect ratio.
+- CONTACT PASS: every resting object has a contact shadow or contact edge at the exact surface it touches; every support has a visible attachment at one end and a ground contact at the other. Floating geometry is a failed generation.
+Preserve the exact requested object, state, attached parts, materials, proportions, and composition.`;
   const implement = hyperframes
     ? `Implement this blueprint as ONE self-contained HyperFrames composition. Target ${settings.width}x${settings.height} (the CLI encodes at ${settings.fps} FPS over ${settings.duration}s). Translate viewport bounds to pixels but preserve the hero's LOCAL aspect ratio with uniform scaling. Build the closed filled silhouette before decorative details. Parent attached parts. Implement ALL choreography segments; never compress them into a generic sine bob. Match velocity at segment joins. Use SEED=${seed} for init-only random detail, never to distort identifying geometry.
 FINITE clip: advance through the specified action; do not reverse to the start or add a loop.`
     : `Implement this blueprint as ONE self-contained HTML file. Target ${settings.width}x${settings.height}, ${settings.fps} FPS, duration ${settings.duration}s. Translate viewport bounds to pixels but preserve the hero's LOCAL aspect ratio with uniform scaling. Build the closed filled silhouette before decorative details. Parent attached parts. Implement ALL choreography segments; never compress them into a generic sine bob. Match velocity at segment joins. Use SEED=${seed} for init-only random detail, never to distort identifying geometry.
 ${settings.looping ? 'Match initial/final state and velocity using the planned loop, without an unexplained reversal.' : 'FINITE clip: advance through the specified action; do not reverse to the start or add a loop.'}`;
-  const userContent = `${brief}${assetBlock}
+  const userContent = `${gefootCreativeContract}
+${antiSlopMotionContract}
+${sceneRecipe}
+${brief}${assetBlock}
 
 ${implement}
 ${hyperframes ? hyperframesComposerContract(settings) : ''}
@@ -676,5 +757,5 @@ ${hyperframes ? '' : `
 FINAL MANDATORY CHECK (this is the last instruction before output):
 ${mandatoryRuntimeSkeleton}`}`;
   const temperature = repair ? Math.min(0.25 + 0.1 * repair.errors.length, 0.7) : 0.25;
-  return injectIconAssets(await requestHtml(settings, `${outputContract(settings)}\n${userContent}`, signal, temperature, !hyperframes, hyperframes ? hyperframesSystem : undefined, repair?.frames), icons);
+  return await requestHtml(settings, `${outputContract(settings)}\n${userContent}`, signal, temperature, !hyperframes, hyperframes ? hyperframesSystem : undefined, repair?.frames);
 }

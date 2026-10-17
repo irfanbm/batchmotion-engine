@@ -402,7 +402,6 @@ export async function capturePreviewStills(args: {
 }): Promise<string[]> {
   // Concept mode (WAAPI scenes) has neither the virtual clock nor a HyperFrames
   // timeline to seek; the review page shows its live composition instead.
-  if (args.mode === "concept") return [];
   const win = new BrowserWindow(renderWindowOptions(args.width, args.height, `preview-${Date.now()}`, false));
   win.webContents.session.webRequest.onBeforeRequest((details, callback) =>
     callback({ cancel: !details.url.startsWith("file:") }),
@@ -414,7 +413,9 @@ export async function capturePreviewStills(args: {
   try {
     if (args.signal.aborted) throw args.signal.reason || new Error("Stopped.");
     await win.loadFile(args.loadFile);
-    if (args.mode === "hyperframes") {
+    const canvasScene = await win.webContents.executeJavaScript(`!!window.__GEOF_SCENE__`);
+    if (args.mode === 'concept' && !canvasScene) return [];
+    if (args.mode === "hyperframes" && !canvasScene) {
       const start = Date.now();
       for (;;) {
         if (args.signal.aborted) throw args.signal.reason || new Error("Stopped.");
@@ -443,7 +444,9 @@ export async function capturePreviewStills(args: {
     for (const [index, fraction] of [0, 0.5, 1].entries()) {
       const time = args.duration * fraction;
       if (args.signal.aborted) throw args.signal.reason || new Error("Stopped.");
-      if (args.mode === "hyperframes")
+      if (canvasScene)
+        await win.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('motionforge:frame',{detail:${time}}))`);
+      else if (args.mode === "hyperframes")
         await win.webContents.executeJavaScript(`void window.__timelines["main"].seek(${time}, false)`);
       else await win.webContents.executeJavaScript(`window.__TIMECUT_SET_TIME__(${time})`);
       await settle(400);
