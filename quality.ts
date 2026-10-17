@@ -294,3 +294,16 @@ export function canvasLivenessReport(frames:Buffer[],width:number,height:number)
   const blank=maxEdge<.0005&&maxSpan<40,still=maxStep<.0002;
   return{blank,still,maxStep,maxEdge,maxSpan,reason:blank?`all ${frames.length} sampled frames are blank (edge density ${(maxEdge*100).toFixed(3)}%, luminance span ${maxSpan.toFixed(0)})`:still?`all ${frames.length} sampled frames are identical (max pixel change ${(maxStep*100).toFixed(4)}% < 0.02%)`:''}
 }
+
+// ---- Canvas pop detector (WARNING ONLY, never a gate) --------------------------------------------------------------
+// A "pop" is a one-frame jump in a scene that is otherwise calm around it: the picture stands still, one frame changes
+// a visible share of pixels, then it stands still again (content swapped on an integer stage index, interpolation that
+// stops short of 1, ...). Ordinary fast motion changes similar amounts on neighbouring frames and is not flagged.
+// steps[i] = fraction of pixels changed between frame i-1 and i (steps[0] is ignored).
+export interface PopReport{pops:{frame:number;step:number;neighbour:number}[];maxStep:number}
+export function popReport(steps:number[],minStep=.003,ratio=10,floor=.0002):PopReport{
+  const pops:PopReport['pops']=[];let maxStep=0;
+  for(let i=1;i<steps.length;i++)maxStep=Math.max(maxStep,steps[i]);
+  for(let i=2;i<steps.length-1;i++){const neighbour=Math.max(steps[i-1]??0,steps[i+1]??0,floor);if(steps[i]>=minStep&&steps[i]>=ratio*neighbour)pops.push({frame:i,step:steps[i],neighbour})}
+  return{pops,maxStep}
+}

@@ -19,6 +19,7 @@ import {
   spikeReport,
   stageContentReport,
   canvasLivenessReport,
+  popReport,
   type StageRegion,
 } from "./quality";
 import {
@@ -129,6 +130,8 @@ export interface RenderReport {
   spikeOk: boolean | null; // false when an element abruptly appears/disappears/stretches
   spikeCount: number; // number of detected geometry-pop frames
   spikeMaxRatio: number; // worst spike as a multiple of the mean delta
+  popCount: number; // Canvas only: isolated one-frame jumps (warning, never a gate)
+  popFrames: number[]; // Canvas only: frame indices of those jumps
   blackSlabShare: number | null; // worst pure-black share across sampled frames (null when unmeasured)
 }
 
@@ -161,6 +164,8 @@ export function defaultRenderReport(): RenderReport {
     spikeOk: null,
     spikeCount: 0,
     spikeMaxRatio: 0,
+    popCount: 0,
+    popFrames: [],
     blackSlabShare: null,
   };
 }
@@ -800,6 +805,9 @@ export async function renderVideo(
     assertRuntimeHealthy("frame rendering initialization");
     const count = plan.count;
     onLog("Rendering frames");
+    // Canvas only: consecutive-frame change series for the (warning-only) pop detector below.
+    const popSteps: number[] = [];
+    let popPrev: Buffer | null = null;
     for (let frame = 0; frame < count; frame++) {
       if (signal.aborted) throw new Error("Generation stopped.");
       await seekAndFlush(win, frame / settings.fps);
@@ -814,7 +822,20 @@ export async function renderVideo(
         path.join(frames, `frame-${String(frame).padStart(6, "0")}.png`),
         image.toPNG(),
       );
+      if (canvasScene) {
+        const bitmap = image.toBitmap();
+        popSteps.push(popPrev ? pixelChangeRatio(popPrev, bitmap, 12, alpha) : 0);
+        popPrev = bitmap;
+      }
       if (frame % 10 === 0) progress(Math.round((frame / count) * 80));
+    }
+    if (canvasScene) {
+      const pops = popReport(popSteps);
+      report.popCount = pops.pops.length;
+      report.popFrames = pops.pops.map((p) => p.frame);
+      // Warning only: a pop is a creative-quality hint (content swapped instead of transformed), never a reason to reject.
+      if (pops.pops.length)
+        visualWarning(`[canvas warning] pop: ${pops.pops.length} one-frame jump(s) between otherwise calm frames: ${pops.pops.slice(0, 6).map((p) => `f${p.frame} (${(p.frame / settings.fps).toFixed(2)}s) ${(p.step * 100).toFixed(2)}%`).join(", ")}${pops.pops.length > 6 ? ", …" : ""}. Transform one persistent object between states instead of swapping drawings.`);
     }
     progress(82);
     const video = path.join(folder, `${baseName}${outputExtension(format)}`);
