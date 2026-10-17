@@ -935,7 +935,7 @@ export class QueueService {
         const lines = (line: string) => {
           if (/^Visual preflight (?:warning|skipped):|^Visual quality gate|^Capture warning/i.test(line))
             this.log("warning", line.slice(-240), job.id);
-          else if (line === "Rendering frames")
+          else if (line === "Rendering frames" || /^Canvas capture:/.test(line))
             this.log("info", line, job.id);
           else if (/error|failed/i.test(line))
             this.log("warning", line.slice(-240), job.id);

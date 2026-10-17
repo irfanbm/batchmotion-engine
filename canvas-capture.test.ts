@@ -71,3 +71,11 @@ test('host loop rejects non-PNG replies and honours stop', async () => {
   await assert.rejects(run(async f => ({ frame: f, png: 'data:image/jpeg;base64,AAAA' }), 2), /PNG data URL/);
   await assert.rejects(captureCanvasFrames(5, async f => ({ frame: f, png: png(f) }), async () => {}, () => true), /stopped/);
 });
+
+test('canvas capture/pop log lines survive the queue log filter', async () => {
+  const { readFileSync } = await import('node:fs');
+  const queue = readFileSync(require.resolve('./queue').replace(/queue\.js$/, 'queue.js'), 'utf8');
+  const render = readFileSync(require.resolve('./render'), 'utf8');
+  assert.match(queue, /\^Canvas capture:/);
+  assert.match(render, /visualWarning\(`Visual preflight warning: \[canvas warning\] pop:/);
+});

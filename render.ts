@@ -848,7 +848,7 @@ export async function renderVideo(
       report.popFrames = pops.pops.map((p) => p.frame);
       // Warning only: a pop is a creative-quality hint (content swapped instead of transformed), never a reason to reject.
       if (pops.pops.length)
-        visualWarning(`[canvas warning] pop: ${pops.pops.length} one-frame jump(s) between otherwise calm frames: ${pops.pops.slice(0, 6).map((p) => `f${p.frame} (${(p.frame / settings.fps).toFixed(2)}s) ${(p.step * 100).toFixed(2)}%`).join(", ")}${pops.pops.length > 6 ? ", …" : ""}. Transform one persistent object between states instead of swapping drawings.`);
+        visualWarning(`Visual preflight warning: [canvas warning] pop: ${pops.pops.length} one-frame jump(s) between otherwise calm frames: ${pops.pops.slice(0, 6).map((p) => `f${p.frame} (${(p.frame / settings.fps).toFixed(2)}s) ${(p.step * 100).toFixed(2)}%`).join(", ")}${pops.pops.length > 6 ? ", …" : ""}. Transform one persistent object between states instead of swapping drawings.`);
     }
     progress(82);
     const video = path.join(folder, `${baseName}${outputExtension(format)}`);
