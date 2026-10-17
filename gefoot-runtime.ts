@@ -21,6 +21,14 @@ export function makeAlphaRuntime(runtime: string): string {
   return runtime.replace(OPAQUE_PREFILL, 'ctx.clearRect(0, 0, BASE_W, BASE_H);');
 }
 
+export interface EngineBuildInfo { name: string; version: string; commit: string; sources: Record<string, string> }
+function readBuildInfo(): EngineBuildInfo {
+  try { return JSON.parse(readFileSync(path.join(__dirname, 'build-info.json'), 'utf8')) as EngineBuildInfo; } catch { return { name: 'batchmotion-engine', version: 'unknown', commit: 'unknown', sources: {} }; }
+}
+export const engineBuildInfo: EngineBuildInfo = readBuildInfo();
+// Short, attribute-safe stamp embedded in every Canvas page: "batchmotion-engine@0.4.5+e2e426e runtime=ab12cd34 prompt=... csv=... gsap=..."
+export const engineStamp = `${engineBuildInfo.name}@${engineBuildInfo.version}+${engineBuildInfo.commit} ${Object.entries(engineBuildInfo.sources).map(([k, v]) => `${k}=${v}`).join(' ')}`.trim();
+
 export function gefootHtml(code: string, duration: number, fps: number, seed: number, alpha: boolean): string {
   const runtime = alpha ? makeAlphaRuntime(gefootRuntime) : gefootRuntime;
   const script = `${runtime}\nconst canvas=document.querySelector('canvas');
@@ -42,5 +50,5 @@ render(0);window.__MOTIONFORGE_READY__=true;
 window.dispatchEvent(new Event('motionforge:ready'));
 }catch(e){window.__MOTIONFORGE_CANVAS_ERROR__=String(e.stack||e);}
 `;
-  return `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:${alpha ? 'transparent' : '#000'}}body{display:grid;place-items:center}canvas{display:block;width:min(100vw,177.777777vh);height:auto;aspect-ratio:16/9}</style></head><body><canvas></canvas><script>${script.replace(/<\/script/gi, '<\\/script')}</script></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="batchmotion-engine" content="${engineStamp.replace(/[^A-Za-z0-9@+._= -]/g, '')}"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:${alpha ? 'transparent' : '#000'}}body{display:grid;place-items:center}canvas{display:block;width:min(100vw,177.777777vh);height:auto;aspect-ratio:16/9}</style></head><body><canvas></canvas><script>${script.replace(/<\/script/gi, '<\\/script')}</script></body></html>`;
 }

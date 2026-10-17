@@ -18,3 +18,18 @@ fs.mkdirSync(path.join(__dirname, 'dist'), { recursive: true });
 for (const name of required) {
   fs.writeFileSync(path.join(__dirname, 'dist', `gefoot-${name}.source`), fs.readFileSync(path.join(root, `${name}.js`), 'utf8'));
 }
+
+// Build stamp: lets any generated Canvas page (and the host) say which engine produced it.
+// commit is "<sha7>" or "<sha7>-dirty" (local edits, e.g. a hand-copied runtime), "nogit" outside a checkout.
+const crypto = require('node:crypto');
+const { execSync } = require('node:child_process');
+const sha8 = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex').slice(0, 8);
+const git = (args) => { try { return execSync(`git ${args}`, { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { return ''; } };
+const sha = git('rev-parse --short=7 HEAD');
+const info = {
+  name: require('./package.json').name,
+  version: require('./package.json').version,
+  commit: sha ? `${sha}${git('status --porcelain -- . ":!dist"') ? '-dirty' : ''}` : 'nogit',
+  sources: Object.fromEntries([...required.map((n) => [n, sha8(path.join(root, `${n}.js`))]), ['gsap', sha8(path.join(__dirname, 'resources', 'gsap.min.js'))]]),
+};
+fs.writeFileSync(path.join(__dirname, 'dist', 'build-info.json'), JSON.stringify(info, null, 2) + '\n');
