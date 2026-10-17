@@ -47,9 +47,9 @@ export async function generateCanvasCode(settings: Settings, concept: string, se
   const duration = settings.duration === 11 || settings.duration === 12 ? settings.duration : 10;
   const system = buildGefootPrompt(concept, duration as 10 | 11 | 12, settings.fps, seed, settings.outputFormat === 'mov-prores4444-alpha');
   const task = repair
-    ? `The previously generated JavaScript failed validation:\n${repair.errors.map((x) => `- ${x}`).join('\n')}\n\nReturn the COMPLETE corrected response as ONE javascript code block only. The response MUST begin with these five comment lines before any function:\n// TITLE: <max 70 characters>\n// KEYWORDS: <exactly 48 unique comma-separated English keywords>\n// CATEGORY: <1-20>\n// DURATION: ${duration}\n// LOOP: <yes or no>\n\nThen define exactly:\nfunction setup(env) { ... }\nfunction draw(ctx, t, env) { ... }\n\nPrevious code:\n\`\`\`javascript\n${repair.code}\n\`\`\``
+    ? `The previously generated JavaScript failed validation:\n${repair.errors.map((x) => `- ${x}`).join('\n')}\n\nFix ONLY these reported problems with the smallest possible change. Preserve the existing composition, palette, subject, timing, motion design, and all unrelated code. Do not simplify or redesign the scene. Return the COMPLETE corrected response as ONE javascript code block only. The response MUST begin with these five comment lines before any function:\n// TITLE: <max 70 characters>\n// KEYWORDS: <exactly 48 unique comma-separated English keywords>\n// CATEGORY: <1-20>\n// DURATION: ${duration}\n// LOOP: <yes or no>\n\nThen define exactly:\nfunction setup(env) { ... }\nfunction draw(ctx, t, env) { ... }\n\nPrevious code:\n\`\`\`javascript\n${repair.code}\n\`\`\``
     : system;
-  return await requestHtml(settings, repair ? `${system}\n\n${task}` : task, signal, 0.45, false, 'You are a helpful assistant. Follow the user’s Canvas scene specification.', undefined, onProgress);
+  return await requestHtml(settings, repair ? `${system}\n\n${task}` : task, signal, repair ? 0.25 : 0.75, false, 'You are a senior motion designer and creative-coding engineer. Creative quality is the goal. Follow the user’s Canvas scene specification and return one runnable scene.', undefined, onProgress);
 }
 
 const antiSlopMotionContract = `ANTI-SLOP MOTION QUALITY CONTRACT:
@@ -439,7 +439,7 @@ export async function readSseContent(response: Response, onProgress?: (stats?: {
 async function requestHtml(settings: Settings, task: string, signal?: AbortSignal, temperature=.25, appendSkeleton = true, systemOverride?: string, images?: string[], onProgress?: (message: string) => void): Promise<string> {
   const url=`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`;
   const userTask = appendSkeleton ? `${task}\n\nFINAL MANDATORY CHECK (this is the last instruction before output):\n${mandatoryRuntimeSkeleton}` : task;
-  const body=JSON.stringify({model:settings.model,temperature,stream:true,messages:[{role:'system',content:systemOverride ?? `${system}\n${outputContract(settings)}`},{role:'user',content:buildObservationMessage(userTask, images ?? [])}] });
+  const body=JSON.stringify({model:settings.model,temperature,stream:true,max_tokens:32768,messages:[{role:'system',content:systemOverride ?? `${system}\n${outputContract(settings)}`},{role:'user',content:buildObservationMessage(userTask, images ?? [])}] });
   for(let attempt=0;attempt<3;attempt++)try{
     onProgress?.(`Waiting for AI provider · ${settings.model} · attempt ${attempt + 1}/3 · request limit 5 minutes`);
     const response=await fetch(url,{method:'POST',signal:AbortSignal.any([...(signal?[signal]:[]),AbortSignal.timeout(300_000)]),headers:{'content-type':'application/json',authorization:`Bearer ${settings.apiKey}`},body});
@@ -458,7 +458,7 @@ async function requestHtml(settings: Settings, task: string, signal?: AbortSigna
       onProgress?.(`AI response complete · ${result.length} chars · ${Math.round((Date.now() - started) / 1000)}s · extracting scene`);
       return extractHtml(result);
     } finally { clearInterval(heartbeat); }
-  }catch(error){if(signal?.aborted)throw error;if(attempt<2&&(error instanceof TypeError||/fetch failed|stream stalled/i.test(String((error as Error).message)))){await wait(1000*2**attempt,signal);continue}throw error}
+  }catch(error){if(signal?.aborted)throw error;if(attempt<2&&(error instanceof TypeError||/fetch failed|stream stalled|cut off|incomplete/i.test(String((error as Error).message)))){await wait(1000*2**attempt,signal);continue}throw error}
   throw new Error('AI request failed after 3 attempts.');
 }
 

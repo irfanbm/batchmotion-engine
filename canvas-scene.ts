@@ -24,10 +24,12 @@ export function parseCanvasMeta(code: string) {
 export function validateCanvasCode(code: string, expectedDuration: number): string[] {
   const errors: string[] = [];
   try { new Function(`${code}\nreturn {setup: typeof setup, draw: typeof draw};`); } catch (e) { errors.push(`JavaScript syntax: ${(e as Error).message}`); }
+  if (!/\bfunction\s+setup\s*\(/.test(code) && !/(?:const|let|var)\s+setup\s*=/.test(code)) errors.push('Missing setup(env)');
   if (!/\b(?:function\s+draw\s*\(|(?:const|let|var)\s+draw\s*=)/.test(code)) errors.push('Missing draw(ctx, t, env)');
   return errors;
 }
 
-export function canvasHtml(code: string, fps: number, seed: number, alpha = false): string {
-  return gefootHtml(code, parseCanvasMeta(code).duration || 10, fps, seed, alpha);
+export function canvasHtml(code: string, fps: number, seed: number, alpha = false, duration?: number): string {
+  const hostDuration = duration === 11 || duration === 12 ? duration : duration === 10 ? 10 : undefined;
+  return gefootHtml(code, hostDuration ?? (parseCanvasMeta(code).duration || 10), fps, seed, alpha);
 }

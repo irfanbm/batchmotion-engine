@@ -130,11 +130,11 @@ export class QueueService {
           const raw = await generateCanvasCode(rs, job.prompt, job.seed, controller.signal, code ? { code, errors } : undefined);
           code = extractJavaScript(raw);
           errors = validateCanvasCode(code, job.duration);
-          if (!errors.length) errors = await probeCanvas(canvasHtml(code, rs.fps, job.seed, alpha), prepared.projectFolder, job.duration, controller.signal);
+           if (!errors.length) errors = await probeCanvas(canvasHtml(code, rs.fps, job.seed, alpha, job.duration), prepared.projectFolder, job.duration, controller.signal);
           if (!errors.length) break;
           if (attempt === settings.retryCount) throw new Error(errors.join('; '));
         }
-        const html = canvasHtml(code, rs.fps, job.seed, alpha);
+         const html = canvasHtml(code, rs.fps, job.seed, alpha, job.duration);
         await saveProject(job, html, prepared.projectFolder, prepared.baseName);
         const meta = parseCanvasMeta(code);
         rs.looping = meta.loop;
@@ -667,7 +667,7 @@ export class QueueService {
           code = extractJavaScript(raw, expectedDuration);
           job.rawResponse = code;
           const errors = validateCanvasCode(code, expectedDuration);
-          if (!errors.length) errors.push(...await probeCanvas(canvasHtml(code, renderSettings.fps, job.seed, alpha), projectFolder, expectedDuration, signal));
+           if (!errors.length) errors.push(...await probeCanvas(canvasHtml(code, renderSettings.fps, job.seed, alpha, expectedDuration), projectFolder, expectedDuration, signal));
           canvasErrors = errors;
           if (!errors.length) break;
           if (retries >= settings.retryCount) throw new Error(`Canvas code validation failed: ${errors.join("; ")}`);
@@ -681,7 +681,7 @@ export class QueueService {
         job.looping = parseCanvasMeta(code).loop;
         renderSettings.looping = job.looping;
         this.log("info", "AI connected · Canvas scene code generated", job.id);
-        html = canvasHtml(code, renderSettings.fps, job.seed, alpha);
+         html = canvasHtml(code, renderSettings.fps, job.seed, alpha, expectedDuration);
         await fs.mkdir(htmlFolder, { recursive: true });
         await fs.writeFile(path.join(htmlFolder, `${baseName}.html`), html, "utf8");
         job.output = batchFolder; job.projectPath = projectFolder; job.baseName = baseName; job.htmlPath = await saveProject(job, html, projectFolder, baseName); job.videoPath = path.join(batchFolder, `${baseName}.mp4`);
@@ -921,7 +921,7 @@ export class QueueService {
       let qualityReport: RenderReport | undefined;
       let lastQualityError: string | undefined;
       const canvasJob = !!job.rawResponse && !job.rawResponse.includes('<html') && /\b(?:function\s+draw\s*\(|(?:const|let|var)\s+draw\s*=)/.test(job.rawResponse);
-      let html = canvasJob ? canvasHtml(job.rawResponse!, renderSettings.fps, job.seed, renderSettings.outputFormat === 'mov-prores4444-alpha') : job.rawResponse ?? (job.htmlPath ? await fs.readFile(job.htmlPath, "utf8") : "");
+      let html = canvasJob ? canvasHtml(job.rawResponse!, renderSettings.fps, job.seed, renderSettings.outputFormat === 'mov-prores4444-alpha', job.duration) : job.rawResponse ?? (job.htmlPath ? await fs.readFile(job.htmlPath, "utf8") : "");
       const renderOnce = async () => {
         this.log("info", isHf ? "Renderer available · Launching HyperFrames CLI" : "Renderer available · Launching Chromium", job.id);
         this.set(job, "rendering", 10);
@@ -989,7 +989,7 @@ export class QueueService {
           if (canvasJob) {
             const code = extractJavaScript(await generateCanvasCode(renderSettings, job.prompt, job.seed, signal, { code: job.rawResponse!, errors: qualityErrors }));
             const errors = validateCanvasCode(code, job.duration);
-            const candidate = errors.length ? '' : canvasHtml(code, renderSettings.fps, job.seed, renderSettings.outputFormat === 'mov-prores4444-alpha');
+            const candidate = errors.length ? '' : canvasHtml(code, renderSettings.fps, job.seed, renderSettings.outputFormat === 'mov-prores4444-alpha', job.duration);
             if (!errors.length) errors.push(...await probeCanvas(candidate, projectFolder, job.duration, signal));
             if (errors.length) { qualityErrors.push(...errors); continue; }
             job.rawResponse = code;
