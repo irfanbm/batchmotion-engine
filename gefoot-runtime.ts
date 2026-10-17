@@ -38,13 +38,18 @@ window.__MOTIONFORGE_ALPHA__=${alpha ? 'true' : 'false'};
 try {
 const scene=compileScene(${JSON.stringify(code)},${JSON.stringify({ duration, fps, seed })});
 window.__GEOF_SCENE__=scene;
-function render(seconds){
+function renderFrame(f){
  try {
  const w=Math.max(16,Math.round(innerWidth));const h=Math.round(w*9/16);
  if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
- scene.drawFrame(ctx,Math.round(seconds*${fps}),w);
+ scene.drawFrame(ctx,f,w);
+ window.__MOTIONFORGE_LAST_FRAME__=f;
  }catch(e){window.__MOTIONFORGE_CANVAS_ERROR__=String(e.stack||e);throw e;}
 }
+function render(seconds){renderFrame(Math.round(seconds*${fps}));}
+window.__MOTIONFORGE_LAST_FRAME__=-1;
+// Host capture hook: draw frame f synchronously and return the canvas pixels of exactly that draw (no paint event involved).
+window.__MOTIONFORGE_CAPTURE_FRAME__=function(f){renderFrame(f);return {frame:window.__MOTIONFORGE_LAST_FRAME__,png:canvas.toDataURL('image/png')};};
 window.addEventListener('motionforge:frame',e=>render(e.detail));
 render(0);window.__MOTIONFORGE_READY__=true;
 window.dispatchEvent(new Event('motionforge:ready'));

@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, nativeImage } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -45,6 +45,7 @@ import {
 } from "./scene-coverage";
 import { normalizeThrown, optionalVisualAnalyzer, visualGateFinding } from "./errors";
 import { injectVirtualClock } from "./virtual-clock";
+import { captureCanvasFrames, CANVAS_CAPTURE_EXPR, type CanvasFrameReply } from "./canvas-capture";
 import { ensureGsapRuntime } from "./gsap-runtime";
 import { validateHtml } from "./validation";
 
@@ -808,11 +809,7 @@ export async function renderVideo(
     // Canvas only: consecutive-frame change series for the (warning-only) pop detector below.
     const popSteps: number[] = [];
     let popPrev: Buffer | null = null;
-    for (let frame = 0; frame < count; frame++) {
-      if (signal.aborted) throw new Error("Generation stopped.");
-      await seekAndFlush(win, frame / settings.fps);
-      assertRuntimeHealthy(`frame ${frame}`);
-      const image = await capture(`frame ${frame}`);
+    const frameDone = async (frame: number, png: Buffer | null, image: Electron.NativeImage) => {
       const size = image.getSize();
       if (size.width !== job.width || size.height !== job.height)
         throw new Error(
@@ -820,7 +817,7 @@ export async function renderVideo(
         );
       await fs.writeFile(
         path.join(frames, `frame-${String(frame).padStart(6, "0")}.png`),
-        image.toPNG(),
+        png ?? image.toPNG(),
       );
       if (canvasScene) {
         const bitmap = image.toBitmap();
@@ -828,6 +825,22 @@ export async function renderVideo(
         popPrev = bitmap;
       }
       if (frame % 10 === 0) progress(Math.round((frame / count) * 80));
+    };
+    if (canvasScene) {
+      // Canvas: draw frame i synchronously in the page and read the canvas pixels of that draw (no paint-event timing).
+      const mapping = await captureCanvasFrames(count, async (frame) => {
+        const reply = await win.webContents.executeJavaScript(CANVAS_CAPTURE_EXPR(frame));
+        assertRuntimeHealthy(`frame ${frame}`);
+        return reply as CanvasFrameReply;
+      }, async (frame, png) => frameDone(frame, png, nativeImage.createFromBuffer(png)), () => signal.aborted);
+      onLog(`Canvas capture: ${mapping.length} frames, scene frame 0..${mapping[mapping.length - 1]} mapped 1:1`);
+    } else
+    for (let frame = 0; frame < count; frame++) {
+      if (signal.aborted) throw new Error("Generation stopped.");
+      await seekAndFlush(win, frame / settings.fps);
+      assertRuntimeHealthy(`frame ${frame}`);
+      const image = await capture(`frame ${frame}`);
+      await frameDone(frame, null, image);
     }
     if (canvasScene) {
       const pops = popReport(popSteps);
