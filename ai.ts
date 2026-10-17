@@ -436,14 +436,30 @@ export async function readSseContent(response: Response, onProgress?: (stats?: {
   return content;
 }
 
+export interface GenParams{temperature?:number;tokenKey:'max_tokens'|'max_completion_tokens'|null;tokens:number}
+const negotiatedParams=new Map<string,Partial<GenParams>>();
+/** Reads a provider 400 and returns adjusted generation params, or null when the rejection is not about them. */
+export function negotiateProviderParams(current:GenParams,detail:string):GenParams|null{
+  const d=detail||'';
+  if(/temperature/i.test(d)&&/unsupported|not support|only the default|invalid/i.test(d)&&current.temperature!==undefined){const{temperature:_t,...rest}=current;return rest}
+  if(/max_tokens/i.test(d)&&/max_completion_tokens/i.test(d)&&current.tokenKey==='max_tokens')return{...current,tokenKey:'max_completion_tokens'};
+  const cap=d.match(/(?:less than or equal to|at most|maximum(?: allowed)?(?: value| tokens)?(?: is| of)?|must be <=?|not exceed|up to)\s*(\d{3,6})/i);
+  if(cap&&/token/i.test(d)&&current.tokenKey&&Number(cap[1])<current.tokens)return{...current,tokens:Number(cap[1])};
+  if(/max_(?:completion_)?tokens/i.test(d)&&/unsupported|unknown|unrecognized|not permitted|not support|extra inputs/i.test(d)&&current.tokenKey)return{...current,tokenKey:null};
+  return null;
+}
 async function requestHtml(settings: Settings, task: string, signal?: AbortSignal, temperature=.25, appendSkeleton = true, systemOverride?: string, images?: string[], onProgress?: (message: string) => void): Promise<string> {
   const url=`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`;
   const userTask = appendSkeleton ? `${task}\n\nFINAL MANDATORY CHECK (this is the last instruction before output):\n${mandatoryRuntimeSkeleton}` : task;
-  const body=JSON.stringify({model:settings.model,temperature,stream:true,max_tokens:32768,messages:[{role:'system',content:systemOverride ?? `${system}\n${outputContract(settings)}`},{role:'user',content:buildObservationMessage(userTask, images ?? [])}] });
+  const cacheKey=`${settings.baseUrl}|${settings.model}`;
+  let params:GenParams={temperature,tokenKey:'max_tokens',tokens:32768,...negotiatedParams.get(cacheKey)};
+  const messages=[{role:'system',content:systemOverride ?? `${system}\n${outputContract(settings)}`},{role:'user',content:buildObservationMessage(userTask, images ?? [])}];
+  const buildBody=()=>JSON.stringify({model:settings.model,...(params.temperature!==undefined?{temperature:params.temperature}:{}),stream:true,...(params.tokenKey?{[params.tokenKey]:params.tokens}:{}),messages});
+  let adaptations=0;
   for(let attempt=0;attempt<3;attempt++)try{
     onProgress?.(`Waiting for AI provider · ${settings.model} · attempt ${attempt + 1}/3 · request limit 5 minutes`);
-    const response=await fetch(url,{method:'POST',signal:AbortSignal.any([...(signal?[signal]:[]),AbortSignal.timeout(300_000)]),headers:{'content-type':'application/json',authorization:`Bearer ${settings.apiKey}`},body});
-    if(!response.ok){if(transientAiStatus(response.status)&&attempt<2){await wait(1000*2**attempt,signal);continue}throw await providerError(response)}
+    const response=await fetch(url,{method:'POST',signal:AbortSignal.any([...(signal?[signal]:[]),AbortSignal.timeout(300_000)]),headers:{'content-type':'application/json',authorization:`Bearer ${settings.apiKey}`},body:buildBody()});
+    if(!response.ok){if(response.status===400&&adaptations<3){const detail=safeProviderMessage(await response.clone().text()),next=negotiateProviderParams(params,detail);if(next){adaptations++;params=next;negotiatedParams.set(cacheKey,{...negotiatedParams.get(cacheKey),...next});onProgress?.(`Provider rejected a generation parameter; retrying adapted (${detail.slice(0,100)})`);attempt--;continue}}if(transientAiStatus(response.status)&&attempt<2){await wait(1000*2**attempt,signal);continue}throw await providerError(response)}
     onProgress?.(`AI provider connected · HTTP ${response.status} · ${response.headers.get('content-type') || 'unknown content type'}`);
     const started = Date.now();
     let received = 0, content = 0, lastData = started;

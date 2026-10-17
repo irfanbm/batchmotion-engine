@@ -12,7 +12,7 @@ import {
   providerUnavailable,
   refineSingleLoop,
 } from "./ai";
-import { canvasHtml, extractJavaScript, parseCanvasMeta, validateCanvasCode } from "./canvas-scene";
+import { canvasBrief, canvasHtml, extractJavaScript, parseCanvasMeta, validateCanvasCode } from "./canvas-scene";
 import { probeCanvas } from './canvas-probe';
 import {
   adaptationCacheMatches,
@@ -79,6 +79,7 @@ export class QueueService {
         width: job.width,
         height: job.height,
         duration: job.duration,
+        fps: job.fps,
         loadFile,
         outDir: projectFolder,
         prefix: baseName,
@@ -127,18 +128,17 @@ export class QueueService {
       try {
         for (let attempt = 0; attempt <= settings.retryCount; attempt++) {
           this.set(job, 'generating', 2);
-          const raw = await generateCanvasCode(rs, job.prompt, job.seed, controller.signal, code ? { code, errors } : undefined);
+          const raw = await generateCanvasCode(rs, canvasBrief(job), job.seed, controller.signal, code ? { code, errors } : undefined);
           code = extractJavaScript(raw);
           errors = validateCanvasCode(code, job.duration);
-           if (!errors.length) errors = await probeCanvas(canvasHtml(code, rs.fps, job.seed, alpha, job.duration), prepared.projectFolder, job.duration, controller.signal);
+           if (!errors.length) errors = await probeCanvas(canvasHtml(code, rs.fps, job.seed, alpha, job.duration), prepared.projectFolder, job.duration, controller.signal, rs.fps);
           if (!errors.length) break;
           if (attempt === settings.retryCount) throw new Error(errors.join('; '));
         }
          const html = canvasHtml(code, rs.fps, job.seed, alpha, job.duration);
         await saveProject(job, html, prepared.projectFolder, prepared.baseName);
         const meta = parseCanvasMeta(code);
-        rs.looping = meta.loop;
-        job.looping = meta.loop;
+        rs.looping = job.looping ?? rs.looping; // host owns loop
         Object.assign(job, { rawResponse: code, htmlPath: path.join(prepared.projectFolder, `${prepared.baseName}.html`), title: meta.title, keywords: meta.keywords, category: meta.category, error: undefined });
         prepared.renderSettings = rs;
         await this.parkForPreview({ job, html, renderSettings: rs, signal: controller.signal, projectFolder: prepared.projectFolder, baseName: prepared.baseName, alpha, isHf: false, isSplit: false });
@@ -259,6 +259,7 @@ export class QueueService {
       .map((prompt) => ({
         id: crypto.randomUUID(),
         prompt: prompt.trim(),
+        originalPrompt: prompt.trim(),
         // Salted seed: same prompt from a different install yields different visuals.
         seed: saltedSeed(crypto.getRandomValues(new Uint32Array(1))[0], installSalt()),
         status: "queued" as const,
@@ -502,6 +503,7 @@ export class QueueService {
       try {
         const next = await preparePromptForQueue(job.prompt, true, beautify);
         if (next !== job.prompt) {
+          job.originalPrompt ??= job.prompt;
           job.prompt = next;
           beautified++;
         } else kept++;
@@ -663,11 +665,11 @@ export class QueueService {
         let code = "";
         let canvasErrors: string[] = [];
         for (;;) {
-          const raw = await this.waitForProvider(job, signal, () => generateCanvasCode(renderSettings, job.prompt, job.seed, signal, code ? { code, errors: canvasErrors } : undefined, message => this.log('info', message, job.id)), () => checkAiProvider(renderSettings));
+          const raw = await this.waitForProvider(job, signal, () => generateCanvasCode(renderSettings, canvasBrief(job), job.seed, signal, code ? { code, errors: canvasErrors } : undefined, message => this.log('info', message, job.id)), () => checkAiProvider(renderSettings));
           code = extractJavaScript(raw, expectedDuration);
           job.rawResponse = code;
           const errors = validateCanvasCode(code, expectedDuration);
-           if (!errors.length) errors.push(...await probeCanvas(canvasHtml(code, renderSettings.fps, job.seed, alpha, expectedDuration), projectFolder, expectedDuration, signal));
+           if (!errors.length) errors.push(...await probeCanvas(canvasHtml(code, renderSettings.fps, job.seed, alpha, expectedDuration), projectFolder, expectedDuration, signal, renderSettings.fps));
           canvasErrors = errors;
           if (!errors.length) break;
           if (retries >= settings.retryCount) throw new Error(`Canvas code validation failed: ${errors.join("; ")}`);
@@ -676,10 +678,10 @@ export class QueueService {
           this.log("warning", `Canvas validation failed: ${errors.join("; ")} · extracted ${code.length} chars · starts "${snippet}" · Retry ${retries}/${settings.retryCount}`, job.id);
         }
         job.rawResponse = code;
-        job.duration = parseCanvasMeta(code).duration || expectedDuration;
+        { const metaDur = parseCanvasMeta(code).duration; if (metaDur && metaDur !== expectedDuration) this.log('warning', `Model metadata DURATION ${metaDur}s ignored; host duration ${expectedDuration}s is used.`, job.id); }
+        job.duration = expectedDuration;
         renderSettings.duration = job.duration;
-        job.looping = parseCanvasMeta(code).loop;
-        renderSettings.looping = job.looping;
+        renderSettings.looping = job.looping ?? renderSettings.looping; // host owns loop
         this.log("info", "AI connected · Canvas scene code generated", job.id);
          html = canvasHtml(code, renderSettings.fps, job.seed, alpha, expectedDuration);
         await fs.mkdir(htmlFolder, { recursive: true });
@@ -987,14 +989,12 @@ export class QueueService {
           );
           if (signal.aborted) throw signal.reason || new Error("Stopped.");
           if (canvasJob) {
-            const code = extractJavaScript(await generateCanvasCode(renderSettings, job.prompt, job.seed, signal, { code: job.rawResponse!, errors: qualityErrors }));
+            const code = extractJavaScript(await generateCanvasCode(renderSettings, canvasBrief(job), job.seed, signal, { code: job.rawResponse!, errors: qualityErrors }));
             const errors = validateCanvasCode(code, job.duration);
             const candidate = errors.length ? '' : canvasHtml(code, renderSettings.fps, job.seed, renderSettings.outputFormat === 'mov-prores4444-alpha', job.duration);
-            if (!errors.length) errors.push(...await probeCanvas(candidate, projectFolder, job.duration, signal));
+            if (!errors.length) errors.push(...await probeCanvas(candidate, projectFolder, job.duration, signal, renderSettings.fps));
             if (errors.length) { qualityErrors.push(...errors); continue; }
             job.rawResponse = code;
-            job.looping = parseCanvasMeta(code).loop;
-            renderSettings.looping = job.looping;
             html = candidate;
             continue;
           }
@@ -1060,7 +1060,7 @@ export class QueueService {
         title: canvasMeta?.title,
         keywords: canvasMeta?.keywords,
         category: canvasMeta?.category,
-        loop: canvasMeta?.loop,
+        loop: canvasMeta ? (job.looping ?? renderSettings.looping) : undefined,
         seed: job.seed,
         generationTimeMs: Date.now() - started,
         duration: job.duration,
