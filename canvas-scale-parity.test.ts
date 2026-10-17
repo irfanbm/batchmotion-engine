@@ -4,9 +4,9 @@ import { gefootRuntime } from './gefoot-runtime';
 
 // Preview-vs-export parity at the API level (no GPU/Electron needed): the same scene is driven through the real
 // Gefoot runtime at several pixel widths against a recording 2D context. Everything the scene sets is in 1920x1080
-// logical units, so every quantity that ends up on screen must scale with pixelW/1920. Quantities that do not are
-// reported as `todo` below: they are the preview/export mismatch (the runtime applies a transform scale, but canvas
-// shadowBlur, shadowOffset and filter lengths are specified in device pixels and are NOT affected by the transform).
+// logical units, so every quantity that ends up on screen must scale with pixelW/1920. The canvas transform scales
+// geometry, but shadowBlur, shadowOffset and filter lengths are device pixels the transform does NOT touch; the
+// runtime must scale them itself (patchContext/scaleProperty). Without that, preview (640) and export (4K) differ.
 
 class StubPath2D { addPath() {} moveTo() {} lineTo() {} arc() {} ellipse() {} rect() {} roundRect() {} arcTo() {} quadraticCurveTo() {} bezierCurveTo() {} closePath() {} }
 type M = { a: number; b: number; c: number; d: number; e: number; f: number };
@@ -16,8 +16,14 @@ class RecCtx {
   m: M = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
   stack: { m: M; lineWidth: number; shadowBlur: number; shadowOffsetY: number; filter: string }[] = [];
   log: Entry[] = []; tSeen = -1;
-  fillStyle: unknown = ''; strokeStyle: unknown = ''; lineWidth = 1; shadowBlur = 0; shadowOffsetX = 0; shadowOffsetY = 0; shadowColor = 'transparent';
-  filter = 'none'; globalCompositeOperation = 'source-over'; globalAlpha = 1; lineJoin = 'miter'; miterLimit = 10; lineCap = 'butt';
+  fillStyle: unknown = ''; strokeStyle: unknown = ''; lineWidth = 1; shadowColor = 'transparent';
+  // Like a real CanvasRenderingContext2D these are accessors on the prototype: the runtime wraps them per context.
+  private _shadowBlur = 0; private _shadowOffsetX = 0; private _shadowOffsetY = 0; private _filter = 'none';
+  get shadowBlur() { return this._shadowBlur; } set shadowBlur(v: number) { this._shadowBlur = v; }
+  get shadowOffsetX() { return this._shadowOffsetX; } set shadowOffsetX(v: number) { this._shadowOffsetX = v; }
+  get shadowOffsetY() { return this._shadowOffsetY; } set shadowOffsetY(v: number) { this._shadowOffsetY = v; }
+  get filter() { return this._filter; } set filter(v: string) { this._filter = v; }
+  globalCompositeOperation = 'source-over'; globalAlpha = 1; lineJoin = 'miter'; miterLimit = 10; lineCap = 'butt';
   setTransform(a: number, b: number, c: number, d: number, e: number, f: number) { this.m = { a, b, c, d, e, f }; }
   getTransform() { return { ...this.m }; }
   save() { this.stack.push({ m: { ...this.m }, lineWidth: this.lineWidth, shadowBlur: this.shadowBlur, shadowOffsetY: this.shadowOffsetY, filter: this.filter }); }
@@ -76,17 +82,16 @@ test('lineWidth scales exactly with pixelW', () => {
   assert.ok(Math.abs(norm(a.lineWidthPx, PREVIEW) - norm(b.lineWidthPx, EXPORT_4K)) < 1e-9);
 });
 
-const gap = 'runtime gap: shadow/filter lengths are device pixels and are not multiplied by the logical->device scale (preview 640 px looks ~3x too soft, 4K ~2x too crisp vs 1920 design). Fix belongs in the shared Gefoot runtime: scale shadowBlur/shadowOffset/filter by ctx.__scale.';
-test('shadowBlur scales with pixelW', { todo: gap }, () => {
+test('shadowBlur scales with pixelW', () => {
   const a = at(run(90, PREVIEW), CARD), b = at(run(90, EXPORT_4K), CARD);
   assert.equal(a.shadowBlurPx > 0 && b.shadowBlurPx > 0, true);
   assert.ok(Math.abs(norm(a.shadowBlurPx, PREVIEW) - norm(b.shadowBlurPx, EXPORT_4K)) < 1e-9, `blur/pixelW ${norm(a.shadowBlurPx, PREVIEW)} vs ${norm(b.shadowBlurPx, EXPORT_4K)}`);
 });
-test('shadowOffset scales with pixelW', { todo: gap }, () => {
+test('shadowOffset scales with pixelW', () => {
   const a = at(run(90, PREVIEW), CARD), b = at(run(90, EXPORT_4K), CARD);
   assert.ok(Math.abs(norm(a.shadowOffsetYPx, PREVIEW) - norm(b.shadowOffsetYPx, EXPORT_4K)) < 1e-9);
 });
-test('filter blur radius scales with pixelW', { todo: gap }, () => {
+test('filter blur radius scales with pixelW', () => {
   const a = at(run(90, PREVIEW), GLOW), b = at(run(90, EXPORT_4K), GLOW);
   assert.equal(a.filterPx > 0, true);
   assert.ok(Math.abs(norm(a.filterPx, PREVIEW) - norm(b.filterPx, EXPORT_4K)) < 1e-9);
