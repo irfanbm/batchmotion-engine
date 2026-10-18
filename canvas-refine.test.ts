@@ -64,7 +64,8 @@ test('score ranks fewer/smaller cuts as calmer', () => {
   assert.ok(transitionRepairErrors(popReport(result5), 30).length === 2);
 });
 
-test('every Canvas request carries the shape and anti-overlap contract', () => {
+test('every Canvas request carries the MF kit, object craft, layout and motion contract', () => {
   const p = buildGefootPrompt('checkout journey', 10, 30, 7);
-  for (const k of ['SHAPE & LAYOUT CONTRACT', 'SHAPE', 'UNIQUENESS', 'NO OVERLAP', 'CONSISTENCY', 'thumbnail size', 'margin left/right', 'HOST OPTIONS: DURATION must be 10']) assert.ok(p.includes(k), k);
+  for (const k of ['HOST KIT', 'MF.icon(', 'MF.badge(', 'MF.card(', 'MF.enter(', 'MF.camera(', 'OBJECT CRAFT', 'UNIQUENESS', 'LAYOUT', 'MOTION', 'cart, ', 'truck', 'HOST OPTIONS: DURATION must be 10']) assert.ok(p.includes(k), k);
+  assert.ok(!p.includes('${'), 'no unresolved template placeholder');
 });

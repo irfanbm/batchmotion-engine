@@ -10,6 +10,11 @@ const promptSource = stripModuleSyntax(readFileSync(path.join(__dirname, 'gefoot
 const gefootModule: { buildPrompt: (idea: string) => string; buildStockCsv: (fileName: string, meta: { title?: string; keywords: string[]; category?: number }) => string } = new Function(`${csvSource}\n${promptSource}\n; return { buildPrompt, buildStockCsv };`)();
 export const gefootPrompt: (idea: string) => string = gefootModule.buildPrompt;
 export const gefootStockCsv = gefootModule.buildStockCsv;
+// Motion-design kit (window-free, Math/Path2D from the scene scope) prepended to every scene so `MF.*` is in scope.
+export const canvasKit = readFileSync(path.join(__dirname, 'gefoot-kit.source'), 'utf8');
+export const withKit = (code: string) => `${canvasKit}\n${code}`;
+// Icon names listed in the prompt are read from the kit itself, so the prompt can never advertise a missing icon.
+export const kitIconNames: string[] = new Function('Path2D', `${canvasKit}\n;return MF.icons;`)(class {});
 
 // The runtime pre-paints every frame black. That only shows when a scene fails to cover the frame (scenes that
 // paint their own background are unaffected: measured 0 differing pixels), so opaque output keeps it as a visible
@@ -36,7 +41,7 @@ const ctx=canvas.getContext('2d');
 window.__MOTIONFORGE_CANVAS_ERROR__='';
 window.__MOTIONFORGE_ALPHA__=${alpha ? 'true' : 'false'};
 try {
-const scene=compileScene(${JSON.stringify(code)},${JSON.stringify({ duration, fps, seed })});
+const scene=compileScene(${JSON.stringify(withKit(code))},${JSON.stringify({ duration, fps, seed })});
 window.__GEOF_SCENE__=scene;
 function renderFrame(f){
  try {

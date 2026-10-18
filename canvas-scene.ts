@@ -1,17 +1,34 @@
-import { gefootHtml, gefootPrompt } from './gefoot-runtime';
+import { gefootHtml, gefootPrompt, kitIconNames } from './gefoot-runtime';
 export const BASE_W = 1920;
 export const BASE_H = 1080;
 
-/** Appended to every Canvas request. Shape and layout only: the prompt already owns flow, timing and staging, so this adds nothing about them. */
-export const SHAPE_CONTRACT = `SHAPE & LAYOUT CONTRACT (every frame must satisfy this):
-- SHAPE: at thumbnail size every object must still be named correctly for what the concept asks (a cart reads as a cart, a package as a package, a coin as a coin, an envelope as an envelope). Build each icon from a few simple primitives with ONE stroke width, ONE corner radius and the concept's palette. No unexplained glyphs, ticks, dashes or decorative marks. A viewer who reads only the silhouette must still name the object correctly.
-- UNIQUENESS: draw each persistent object exactly once per frame and keep its identity and its anchor while it moves. Never leave a duplicate copy standing while another copy moves.
-- NO OVERLAP: nothing overlaps by accident. Keep each object inside the frame with at least 6% margin left/right and 8% top/bottom, keep a clear gap of empty space between separate objects, and never let text sit on top of another object or on a moving part. Any negative space the concept reserves stays truly empty.
-- CONSISTENCY: align objects to a simple grid with even spacing, and use one light direction and one drop-shadow offset for the whole scene.`;
+/** Appended to every Canvas request: the host-provided MF kit plus the shape, layout and motion bar a sellable clip must meet. */
+export const CRAFT_CONTRACT = `HOST KIT (already in scope as the global MF; do not redefine it, do not paste it, just call it). Every helper is deterministic and draws in 1920x1080 units:
+- Icons: MF.icon(ctx, name, cx, cy, size, {color, width:2, progress, alpha, rotate, fill}) draws a professional line icon centred on (cx,cy) on a 24-unit grid; progress<1 draws its strokes on. MF.badge(ctx, name, cx, cy, size, {bg, fg, shape:'circle'|'squircle', progress, alpha, ring}) is a solid app-icon style badge. Names: ${kitIconNames.join(', ')}. Aliases such as package, parcel, payment, creditcard, money, invoice, discount, profile, settings, analytics, growth, location also resolve.
+- Surfaces: MF.card(ctx, x, y, w, h, {r, fill, stroke, shadow, alpha}) (x,y = top-left) is a rounded panel with a soft drop shadow; MF.rr(ctx, x, y, w, h, r) builds a rounded-rect path; MF.shadow / MF.noShadow set one consistent shadow.
+- Data UI: MF.bar(ctx, x, y, w, h, p, {color, track}), MF.ring(ctx, cx, cy, r, p, {width, color, track}), MF.line(ctx, x0, y0, x1, y1, p, {color, width, dash}), MF.text(ctx, str, x, y, {size, weight, color, align, tracking, alpha}), MF.fmt(value, {decimals, prefix, suffix}).
+- Motion: MF.seg(t, start, dur, ease) -> eased 0..1 of a window; MF.stagger(t, i, start, step, dur, ease); MF.track(t, [[time, value, ease], ...]) keyframes; MF.spring(t - start, {freq, damping}) a settle with natural overshoot; MF.enter(ctx, p, x, y, (c) => {...draw at local 0,0...}, {from:'up'|'down'|'left'|'right', dist, scale}) fade + travel + scale in; MF.camera(ctx, t, duration, {zoom:0.04, loop}) a slow push-in (call inside save/restore); MF.float(t, i, amp) idle drift; MF.ease.outCubic / outQuart / outExpo / outBack / inOutCubic / inOutSine; MF.mixColor, MF.rgba, MF.lerp, MF.clamp; MF.SAFE = {x0, x1, y0, y1} safe area.
+
+OBJECT CRAFT (this is what makes the clip sellable):
+- Every recognisable object (cart, card, package, truck, coin, user, lock, bell, chart, phone, document...) is drawn with MF.icon or MF.badge, not hand-drawn from ad-hoc lines. Hand-draw only what the kit cannot express (a custom illustration, the hero product shape), and then with the same stroke weight, the same round joins and the same palette as the kit icons.
+- One visual system for the whole clip: one corner radius family, one icon stroke weight, one shadow, a palette of at most 3 colours plus neutrals, one font (MF.FONT) in at most 3 sizes. UI-like content sits on MF.card surfaces.
+- At thumbnail size every object must still be named correctly. No unexplained glyphs, ticks, dashes or decorative marks.
+- UNIQUENESS: each persistent object is drawn exactly once per frame and keeps its identity and anchor while it moves; never leave a duplicate copy standing.
+
+LAYOUT:
+- Plan the layout first: compute every object's rectangle in setup() from a simple grid inside MF.SAFE and draw from those rectangles. Nothing overlaps by accident, every object keeps a clear gap to its neighbours, text never sits on another object or on a moving part, reserved negative space stays empty.
+- Hierarchy: exactly one hero element at a time is clearly the largest and most contrasted; supporting elements are smaller and calmer.
+
+MOTION (professional, not template):
+- Every entrance is MF.enter with an eased progress (outCubic / outQuart / outExpo, or MF.spring for a small overshoot) lasting 0.45-0.9 s; groups stagger 0.06-0.12 s with MF.stagger. No linear moves, no instant pops, no element appearing at full alpha.
+- Lines, routes, icons and progress fill with draw-on (progress) in sync with the story. Values count up with an ease (MF.fmt on an eased value).
+- Exactly one primary motion at a time; everything else holds with at most a subtle MF.float idle. Stage changes overlap: the outgoing element eases out while the incoming one eases in, the shared container stays and morphs (MF.mixRect, MF.track).
+- Wrap the scene in a slow MF.camera push-in (zoom 0.02-0.05) for depth; use loop:true when the clip loops.
+- The final 1.5 s hold a complete, calm composition that works as the thumbnail.`;
 
 export function buildGefootPrompt(concept: string, duration: 10 | 11 | 12, fps: number, seed: number, alpha = false): string {
   const prompt = gefootPrompt(concept);
-  return `${prompt}\n${SHAPE_CONTRACT}\nHOST OPTIONS: DURATION must be ${duration}; fps=${fps}; seed=${seed}.${alpha ? '\nALPHA override: preserve transparent background instead of painting a full opaque background.' : ''}`;
+  return `${prompt}\n${CRAFT_CONTRACT}\nHOST OPTIONS: DURATION must be ${duration}; fps=${fps}; seed=${seed}.${alpha ? '\nALPHA override: preserve transparent background instead of painting a full opaque background.' : ''}`;
 }
 
 export function extractJavaScript(raw: string, _expectedDuration = 10): string {

@@ -5,12 +5,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = process.env.CANVAS_SRC_DIR ? path.resolve(process.env.CANVAS_SRC_DIR) : path.join(__dirname, 'resources', 'canvas');
-const required = ['runtime', 'prompt', 'csv']; // prompt.js imports stockCsvText from csv.js
+const required = ['runtime', 'prompt', 'csv', 'kit']; // prompt.js imports stockCsvText from csv.js; kit.js is the MF motion kit
 
 const missing = required.filter((name) => !fs.existsSync(path.join(root, `${name}.js`)));
 if (missing.length) {
   console.error(`build-gefoot: missing ${missing.map((n) => `${n}.js`).join(', ')} in ${root}.`);
-  console.error('Add the Canvas sources to resources/canvas/ (runtime.js, prompt.js, csv.js).');
+  console.error('Add the Canvas sources to resources/canvas/ (runtime.js, prompt.js, csv.js, kit.js).');
   process.exit(1);
 }
 
