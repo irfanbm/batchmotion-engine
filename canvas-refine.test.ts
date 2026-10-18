@@ -64,7 +64,7 @@ test('score ranks fewer/smaller cuts as calmer', () => {
   assert.ok(transitionRepairErrors(popReport(result5), 30).length === 2);
 });
 
-test('every Canvas request carries the microstock flow/placement/shape/motion contract', () => {
+test('every Canvas request carries the shape and anti-overlap contract', () => {
   const p = buildGefootPrompt('checkout journey', 10, 30, 7);
-  for (const k of ['MICROSTOCK FOOTAGE CONTRACT', 'FLOW', 'PLACEMENT', 'SHAPE', 'MOTION', 'safe area', 'persistent', 'HOST OPTIONS: DURATION must be 10']) assert.ok(p.includes(k), k);
+  for (const k of ['SHAPE & LAYOUT CONTRACT', 'SHAPE', 'UNIQUENESS', 'NO OVERLAP', 'CONSISTENCY', 'thumbnail size', 'margin left/right', 'HOST OPTIONS: DURATION must be 10']) assert.ok(p.includes(k), k);
 });

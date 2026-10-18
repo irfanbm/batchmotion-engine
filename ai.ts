@@ -49,7 +49,10 @@ export async function generateCanvasCode(settings: Settings, concept: string, se
   const task = repair
     ? `The previously generated JavaScript failed validation:\n${repair.errors.map((x) => `- ${x}`).join('\n')}\n\nFix ONLY these reported problems with the smallest possible change. Preserve the existing composition, palette, subject, timing, motion design, and all unrelated code. Do not simplify or redesign the scene. Return the COMPLETE corrected response as ONE javascript code block only. The response MUST begin with these five comment lines before any function:\n// TITLE: <max 70 characters>\n// KEYWORDS: <exactly 48 unique comma-separated English keywords>\n// CATEGORY: <1-20>\n// DURATION: ${duration}\n// LOOP: <yes or no>\n\nThen define exactly:\nfunction setup(env) { ... }\nfunction draw(ctx, t, env) { ... }\n\nPrevious code:\n\`\`\`javascript\n${repair.code}\n\`\`\``
     : system;
-  return await requestHtml(settings, repair ? `${system}\n\n${task}` : task, signal, repair ? 0.25 : 0.75, false, 'You are a senior motion designer and creative-coding engineer. Creative quality is the goal. Follow the user’s Canvas scene specification and return one runnable scene.', undefined, onProgress);
+  // Generation goes as ONE user message holding the prompt verbatim (the same thing the
+  // user pastes into ChatGPT by hand); no engine-only system role is layered on top.
+  // Repair keeps a system role so the spec stays in view while fixing a concrete failure.
+  return await requestHtml(settings, repair ? `${system}\n\n${task}` : task, signal, repair ? 0.25 : 0.75, false, repair ? 'You are a senior motion designer and creative-coding engineer. Creative quality is the goal. Follow the user’s Canvas scene specification and return one runnable scene.' : undefined, undefined, onProgress, !repair);
 }
 
 const antiSlopMotionContract = `ANTI-SLOP MOTION QUALITY CONTRACT:
@@ -293,7 +296,7 @@ export function parseAiJson(raw:string){
     try{return JSON.parse(withoutTrailingCommas) as unknown}catch{throw error}
   }
 }
-export function resolveAiModel(settings:Pick<Settings,'model'|'generationModel'|'refinementModel'>){return settings.model?.trim()||settings.generationModel?.trim()||settings.refinementModel?.trim()||'gpt-4o-mini'}
+export function resolveAiModel(settings:Pick<Settings,'model'|'generationModel'|'refinementModel'>){return settings.model?.trim()||settings.generationModel?.trim()||settings.refinementModel?.trim()||'gpt-5'}
 export function safeProviderMessage(raw:string){const clean=raw.replace(/\s+/g,' ').trim();try{const value=JSON.parse(raw) as {error?:{message?:unknown}|string;message?:unknown},message=typeof value.error==='object'?value.error?.message:typeof value.error==='string'?value.error:value.message;return typeof message==='string'?message.replace(/\s+/g,' ').trim().slice(0,300):clean.slice(0,300)}catch{return clean.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,300)}}
 async function providerError(response:Response){const detail=safeProviderMessage(await response.text());if(response.status===401||response.status===403)return new Error(`AI provider authentication failed (${response.status}): ${detail||'check the API key permissions.'}`);return new Error(`AI provider returned ${response.status}: ${detail||response.statusText||'request rejected.'}`)}
 // A health probe must not carry generation-shaping parameters: gateways reject tiny
@@ -448,12 +451,16 @@ export function negotiateProviderParams(current:GenParams,detail:string):GenPara
   if(/max_(?:completion_)?tokens/i.test(d)&&/unsupported|unknown|unrecognized|not permitted|not support|extra inputs/i.test(d)&&current.tokenKey)return{...current,tokenKey:null};
   return null;
 }
-async function requestHtml(settings: Settings, task: string, signal?: AbortSignal, temperature=.25, appendSkeleton = true, systemOverride?: string, images?: string[], onProgress?: (message: string) => void): Promise<string> {
+async function requestHtml(settings: Settings, task: string, signal?: AbortSignal, temperature=.25, appendSkeleton = true, systemOverride?: string, images?: string[], onProgress?: (message: string) => void, bare = false): Promise<string> {
   const url=`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`;
   const userTask = appendSkeleton ? `${task}\n\nFINAL MANDATORY CHECK (this is the last instruction before output):\n${mandatoryRuntimeSkeleton}` : task;
   const cacheKey=`${settings.baseUrl}|${settings.model}`;
   let params:GenParams={temperature,tokenKey:'max_tokens',tokens:32768,...negotiatedParams.get(cacheKey)};
-  const messages=[{role:'system',content:systemOverride ?? `${system}\n${outputContract(settings)}`},{role:'user',content:buildObservationMessage(userTask, images ?? [])}];
+  // bare: the Canvas path sends exactly one user message, byte-for-byte the prompt the
+  // user would paste into a chat, instead of a system role plus an observation wrapper.
+  const messages = bare
+    ? [{role:'user',content:userTask}]
+    : [{role:'system',content:systemOverride ?? `${system}\n${outputContract(settings)}`},{role:'user',content:buildObservationMessage(userTask, images ?? [])}];
   const buildBody=()=>JSON.stringify({model:settings.model,...(params.temperature!==undefined?{temperature:params.temperature}:{}),stream:true,...(params.tokenKey?{[params.tokenKey]:params.tokens}:{}),messages});
   let adaptations=0;
   for(let attempt=0;attempt<3;attempt++)try{

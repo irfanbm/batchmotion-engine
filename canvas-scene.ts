@@ -2,17 +2,16 @@ import { gefootHtml, gefootPrompt } from './gefoot-runtime';
 export const BASE_W = 1920;
 export const BASE_H = 1080;
 
-/** Appended by the host to every Canvas request, independent of the vendored prompt.js, so a stock clip is always flowing, placed and moved correctly. */
-export const MICROSTOCK_CONTRACT = `MICROSTOCK FOOTAGE CONTRACT (this clip is sold as stock footage; it must be usable as delivered):
-- FLOW: one continuous shot the viewer can follow from start to end. Keep ONE persistent hero container/object for the whole clip and make every stage a state change of it (move, scale, morph, cross-fade) over overlapping eased windows of at least 0.4 s. Never swap whole drawings with if/else or switch on the time at full alpha, never show an empty or half-built frame between stages. Each element enters from where it logically comes from and leaves toward where it goes.
-- START/END: frame 0 is already a resolved, recognisable composition; the last 1.5 s are a calm, complete, held final composition (the intended thumbnail).
-- PLACEMENT: all visible content stays inside a safe area (at least 6% margin left/right, 8% top/bottom) at every frame; nothing is clipped by the frame or by its own container, nothing overlaps by accident, and negative/copy space requested by the brief stays truly empty. Align objects to a simple grid with consistent spacing.
-- SHAPE: every object is recognisable at thumbnail size for what it is (a cart reads as a cart, a package as a package). Build icons from simple geometric primitives with one stroke width, one corner radius and the brief's palette; no unexplained glyphs, ticks or decorations.
-- MOTION: ease-in-out (or a small overshoot) on every move, 60-120 ms stagger between siblings, one motion idea per stage, consistent speed, no sudden jumps, progress/route elements drawn progressively in sync with the story.`;
+/** Appended to every Canvas request. Shape and layout only: the prompt already owns flow, timing and staging, so this adds nothing about them. */
+export const SHAPE_CONTRACT = `SHAPE & LAYOUT CONTRACT (every frame must satisfy this):
+- SHAPE: at thumbnail size every object must still be named correctly for what the concept asks (a cart reads as a cart, a package as a package, a coin as a coin, an envelope as an envelope). Build each icon from a few simple primitives with ONE stroke width, ONE corner radius and the concept's palette. No unexplained glyphs, ticks, dashes or decorative marks. A viewer who reads only the silhouette must still name the object correctly.
+- UNIQUENESS: draw each persistent object exactly once per frame and keep its identity and its anchor while it moves. Never leave a duplicate copy standing while another copy moves.
+- NO OVERLAP: nothing overlaps by accident. Keep each object inside the frame with at least 6% margin left/right and 8% top/bottom, keep a clear gap of empty space between separate objects, and never let text sit on top of another object or on a moving part. Any negative space the concept reserves stays truly empty.
+- CONSISTENCY: align objects to a simple grid with even spacing, and use one light direction and one drop-shadow offset for the whole scene.`;
 
 export function buildGefootPrompt(concept: string, duration: 10 | 11 | 12, fps: number, seed: number, alpha = false): string {
   const prompt = gefootPrompt(concept);
-  return `${prompt}\n${MICROSTOCK_CONTRACT}\nHOST OPTIONS: DURATION must be ${duration}; fps=${fps}; seed=${seed}.${alpha ? '\nALPHA override: preserve transparent background instead of painting a full opaque background.' : ''}`;
+  return `${prompt}\n${SHAPE_CONTRACT}\nHOST OPTIONS: DURATION must be ${duration}; fps=${fps}; seed=${seed}.${alpha ? '\nALPHA override: preserve transparent background instead of painting a full opaque background.' : ''}`;
 }
 
 export function extractJavaScript(raw: string, _expectedDuration = 10): string {

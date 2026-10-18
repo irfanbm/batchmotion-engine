@@ -47,6 +47,11 @@ import { ensureGsapRuntime } from "./gsap-runtime";
 import { installSalt, saltedSeed } from "./seed";
 import { blueprintSchema } from "./blueprint";
 
+// Transition repair fired a second model call that rewrote an already-valid scene. It is
+// off by default: the scene the model produced is the scene that ships. Flip to true to
+// re-enable the opt-in "one repair attempt when hard cuts are detected" pass.
+const CANVAS_TRANSITION_REPAIR: boolean = false;
+
 export class QueueService {
   jobs: Job[] = [];
   history: HistoryItem[] = [];
@@ -679,14 +684,16 @@ export class QueueService {
           this.log("warning", `Canvas validation failed: ${errors.join("; ")} · extracted ${code.length} chars · starts "${snippet}" · Retry ${retries}/${settings.retryCount}`, job.id);
         }
         job.rawResponse = code;
-        code = await refineTransitions(code, {
-          fps: renderSettings.fps,
-          log: (m) => this.log('info', m, job.id),
-          steps: (c) => probeCanvasSteps(canvasHtml(c, renderSettings.fps, job.seed, alpha, expectedDuration), projectFolder, expectedDuration, signal, renderSettings.fps),
-          validate: async (c) => { const e = validateCanvasCode(c, expectedDuration); return e.length ? e : await probeCanvas(canvasHtml(c, renderSettings.fps, job.seed, alpha, expectedDuration), projectFolder, expectedDuration, signal, renderSettings.fps); },
-          regenerate: async (c, errs) => extractJavaScript(await this.waitForProvider(job, signal, () => generateCanvasCode(renderSettings, canvasBrief(job), job.seed, signal, { code: c, errors: errs }), () => checkAiProvider(renderSettings)), expectedDuration),
-        });
-        job.rawResponse = code;
+        if (CANVAS_TRANSITION_REPAIR) {
+          code = await refineTransitions(code, {
+            fps: renderSettings.fps,
+            log: (m) => this.log('info', m, job.id),
+            steps: (c) => probeCanvasSteps(canvasHtml(c, renderSettings.fps, job.seed, alpha, expectedDuration), projectFolder, expectedDuration, signal, renderSettings.fps),
+            validate: async (c) => { const e = validateCanvasCode(c, expectedDuration); return e.length ? e : await probeCanvas(canvasHtml(c, renderSettings.fps, job.seed, alpha, expectedDuration), projectFolder, expectedDuration, signal, renderSettings.fps); },
+            regenerate: async (c, errs) => extractJavaScript(await this.waitForProvider(job, signal, () => generateCanvasCode(renderSettings, canvasBrief(job), job.seed, signal, { code: c, errors: errs }), () => checkAiProvider(renderSettings)), expectedDuration),
+          });
+          job.rawResponse = code;
+        }
         { const metaDur = parseCanvasMeta(code).duration; if (metaDur && metaDur !== expectedDuration) this.log('warning', `Model metadata DURATION ${metaDur}s ignored; host duration ${expectedDuration}s is used.`, job.id); }
         job.duration = expectedDuration;
         renderSettings.duration = job.duration;

@@ -17,7 +17,7 @@ export function normalizeRenderPreset<T extends Pick<Settings, 'width'|'height'|
   if (![30,60].includes(value.fps)) value.fps = 30;
   return value;
 }
-export function resolveStoredModel(value:Pick<Settings,'model'|'generationModel'|'refinementModel'>){return value.model?.trim()||value.generationModel?.trim()||value.refinementModel?.trim()||'gpt-4o-mini'}
+export function resolveStoredModel(value:Pick<Settings,'model'|'generationModel'|'refinementModel'>){return value.model?.trim()||value.generationModel?.trim()||value.refinementModel?.trim()||'gpt-5'}
 // Parse persisted JSON without swallowing corruption. A missing file is an empty result;
 // a present-but-invalid file throws so callers can quarantine it instead of replacing it.
 export function parseStoredJson<T>(text: string, fallback: T): T {
