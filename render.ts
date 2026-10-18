@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, nativeImage } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -18,6 +18,8 @@ import {
   pixelChangeRatio,
   spikeReport,
   stageContentReport,
+  canvasLivenessReport,
+  popReport,
   type StageRegion,
 } from "./quality";
 import {
@@ -43,6 +45,7 @@ import {
 } from "./scene-coverage";
 import { normalizeThrown, optionalVisualAnalyzer, visualGateFinding } from "./errors";
 import { injectVirtualClock } from "./virtual-clock";
+import { captureCanvasFrames, CANVAS_CAPTURE_EXPR, type CanvasFrameReply } from "./canvas-capture";
 import { ensureGsapRuntime } from "./gsap-runtime";
 import { validateHtml } from "./validation";
 
@@ -128,6 +131,8 @@ export interface RenderReport {
   spikeOk: boolean | null; // false when an element abruptly appears/disappears/stretches
   spikeCount: number; // number of detected geometry-pop frames
   spikeMaxRatio: number; // worst spike as a multiple of the mean delta
+  popCount: number; // Canvas only: isolated one-frame jumps (warning, never a gate)
+  popFrames: number[]; // Canvas only: frame indices of those jumps
   blackSlabShare: number | null; // worst pure-black share across sampled frames (null when unmeasured)
 }
 
@@ -160,6 +165,8 @@ export function defaultRenderReport(): RenderReport {
     spikeOk: null,
     spikeCount: 0,
     spikeMaxRatio: 0,
+    popCount: 0,
+    popFrames: [],
     blackSlabShare: null,
   };
 }
@@ -598,8 +605,8 @@ export async function renderVideo(
         if (!opening.ok) {
           const message = opening.reason ?? "opening frame stage check failed";
           const gate = opening.coverage < opening.minCoverage ? "empty frame" : "stage contrast";
-          if (VISUAL_GATES.openingFrame) qualityGateReject(gate, message, visualWarning);
-          else visualGateFinding(EXPERIMENTAL_VISUAL_GATES, message, visualWarning);
+          if (VISUAL_GATES.openingFrame && !canvasScene) qualityGateReject(gate, message, visualWarning);
+          else visualGateFinding(canvasScene ? false : EXPERIMENTAL_VISUAL_GATES, canvasScene ? `[canvas warning] ${message}` : message, visualWarning);
         }
       }, visualWarning, signal, latestFatalRuntime);
     }
@@ -629,12 +636,12 @@ export async function renderVideo(
     report.motionPass = activity.ok && activePct >= MIN_ACTIVE_FRAME_PCT;
     if (!activity.ok) {
       const message = `scene is effectively still; maximum changed pixels ${(activity.change * 100).toFixed(3)}% is below ${(activity.threshold * 100).toFixed(3)}%`;
-      if (VISUAL_GATES.motionActivity) qualityGateReject("motion activity", message, visualWarning);
-      else visualGateFinding(EXPERIMENTAL_VISUAL_GATES, message, visualWarning);
+      if (VISUAL_GATES.motionActivity && !canvasScene) qualityGateReject("motion activity", message, visualWarning);
+      else visualGateFinding(canvasScene ? false : EXPERIMENTAL_VISUAL_GATES, canvasScene ? `[canvas warning] ${message}` : message, visualWarning);
     } else if (activePct < MIN_ACTIVE_FRAME_PCT) {
       const message = `scene barely moves; only ${activePct.toFixed(1)}% of sampled frames change above threshold (minimum ${MIN_ACTIVE_FRAME_PCT}%)`;
-      if (VISUAL_GATES.motionActivity) qualityGateReject("motion activity", message, visualWarning);
-      else visualGateFinding(EXPERIMENTAL_VISUAL_GATES, message, visualWarning);
+      if (VISUAL_GATES.motionActivity && !canvasScene) qualityGateReject("motion activity", message, visualWarning);
+      else visualGateFinding(canvasScene ? false : EXPERIMENTAL_VISUAL_GATES, canvasScene ? `[canvas warning] ${message}` : message, visualWarning);
     }
     const flicker = flickerReport(activity.ratios);
     report.flickerReversals = flicker.reversals;
@@ -642,8 +649,8 @@ export async function renderVideo(
     report.flickerOk = flicker.ok;
     if (!flicker.ok) {
       const message = `flicker detected; ${flicker.reversals} direction reversals with maximum swing ${(flicker.maxSwing * 100).toFixed(2)}% between sampled frames`;
-      if (VISUAL_GATES.flicker) qualityGateReject("flicker", message, visualWarning);
-      else visualGateFinding(EXPERIMENTAL_VISUAL_GATES, message, visualWarning);
+      if (VISUAL_GATES.flicker && !canvasScene) qualityGateReject("flicker", message, visualWarning);
+      else visualGateFinding(canvasScene ? false : EXPERIMENTAL_VISUAL_GATES, canvasScene ? `[canvas warning] ${message}` : message, visualWarning);
     }
     if (!alpha) {
       let worstContrast = Infinity;
@@ -666,8 +673,8 @@ export async function renderVideo(
       if (empties.length || contrastFail) {
         const message = empties.length ? empties[0] : (contrastReason ?? `subject blends into the stage background: contrast ${worstContrast.toFixed(2)} below 2.5`);
         const gate = empties.length ? "empty frame" : "stage contrast";
-        if (VISUAL_GATES.stageContrast) qualityGateReject(gate, message, visualWarning);
-        else visualGateFinding(EXPERIMENTAL_VISUAL_GATES, message, visualWarning);
+        if (VISUAL_GATES.stageContrast && !canvasScene) qualityGateReject(gate, message, visualWarning);
+        else visualGateFinding(canvasScene ? false : EXPERIMENTAL_VISUAL_GATES, canvasScene ? `[canvas warning] ${message}` : message, visualWarning);
       }
       let worstBlack = 0;
       let blackReason: string | undefined;
@@ -681,11 +688,24 @@ export async function renderVideo(
       report.blackSlabShare = Math.round(worstBlack * 1000) / 1000;
       if (worstBlack > 0.08) {
         const message = blackReason ?? `pure-black mass covers ${(worstBlack * 100).toFixed(1)}% of the stage, above the allowed 8%`;
-        if (VISUAL_GATES.blackSlab) qualityGateReject("black slab", message, visualWarning);
-        else visualGateFinding(EXPERIMENTAL_VISUAL_GATES, message, visualWarning);
+        if (VISUAL_GATES.blackSlab && !canvasScene) qualityGateReject("black slab", message, visualWarning);
+        else visualGateFinding(canvasScene ? false : EXPERIMENTAL_VISUAL_GATES, canvasScene ? `[canvas warning] ${message}` : message, visualWarning);
       }
     }
     }, visualWarning, signal, latestFatalRuntime);
+    if (canvasScene && !alpha) {
+      // Canvas: reject ONLY catastrophic output (blank or truly frozen). Everything else above is a warning.
+      const liveTimes = Array.from({ length: 12 }, (_, i) => (plan.lastTime * i) / 11);
+      const liveFrames: Buffer[] = [];
+      for (const time of liveTimes) {
+        await seekAndFlush(win, time);
+        liveFrames.push((await win.webContents.capturePage()).toBitmap());
+      }
+      const live = canvasLivenessReport(liveFrames, job.width, job.height);
+      report.motionMaxDelta = Math.max(report.motionMaxDelta, live.maxStep);
+      if (live.blank) qualityGateReject("blank frame", live.reason, visualWarning);
+      if (live.still) qualityGateReject("still scene", live.reason, visualWarning);
+    }
     await optionalVisualAnalyzer("text legibility diagnostic", async () => {
       if (alpha) return;
       const { findings, skipped } = await runTextLegibilityProbe({
@@ -702,7 +722,7 @@ export async function renderVideo(
       if (report.textFindings.length) {
         const message = report.textFindings.slice(0, 4).join('; ');
         if (VISUAL_GATES.textLegibility) qualityGateReject("text legibility", message, visualWarning);
-        else visualGateFinding(EXPERIMENTAL_VISUAL_GATES, message, visualWarning);
+        else visualGateFinding(canvasScene ? false : EXPERIMENTAL_VISUAL_GATES, canvasScene ? `[canvas warning] ${message}` : message, visualWarning);
       }
     }, visualWarning, signal, latestFatalRuntime);
     await optionalVisualAnalyzer("beat coherence diagnostic", async () => {
@@ -741,8 +761,8 @@ export async function renderVideo(
       report.cameraMotionOk = cam.ok;
       if (!cam.ok) {
         const message = `camera: ${cam.reason ?? "locked static frame"}`;
-        if (VISUAL_GATES.cameraMotion) qualityGateReject("camera motion", message, visualWarning);
-        else visualGateFinding(EXPERIMENTAL_VISUAL_GATES, message, visualWarning);
+        if (VISUAL_GATES.cameraMotion && !canvasScene) qualityGateReject("camera motion", message, visualWarning);
+        else visualGateFinding(canvasScene ? false : EXPERIMENTAL_VISUAL_GATES, canvasScene ? `[canvas warning] ${message}` : message, visualWarning);
       }
       const kin = kineticReport(camStage);
       report.kineticLinearity = kin.linearity;
@@ -750,8 +770,8 @@ export async function renderVideo(
       if (!kin.ok) {
         const message = `kinetic: ${kin.reason ?? "mechanical linear motion"}`;
         report.kineticWarning = true;
-        if (VISUAL_GATES.kinetic) qualityGateReject("kinetic", message, visualWarning);
-        else visualGateFinding(EXPERIMENTAL_VISUAL_GATES, message, visualWarning);
+        if (VISUAL_GATES.kinetic && !canvasScene) qualityGateReject("kinetic", message, visualWarning);
+        else visualGateFinding(canvasScene ? false : EXPERIMENTAL_VISUAL_GATES, canvasScene ? `[canvas warning] ${message}` : message, visualWarning);
       }
       const ratios = camStage.slice(1).map((f, i) => pixelChangeRatio(camStage[i], f));
       const spikes = spikeReport(ratios);
@@ -760,8 +780,8 @@ export async function renderVideo(
       report.spikeMaxRatio = spikes.maxRatio;
       if (!spikes.ok) {
         const message = `spike: ${spikes.reason ?? "abrupt geometry pop"}`;
-        if (VISUAL_GATES.spike) qualityGateReject("spike", message, visualWarning);
-        else visualGateFinding(EXPERIMENTAL_VISUAL_GATES, message, visualWarning);
+        if (VISUAL_GATES.spike && !canvasScene) qualityGateReject("spike", message, visualWarning);
+        else visualGateFinding(canvasScene ? false : EXPERIMENTAL_VISUAL_GATES, canvasScene ? `[canvas warning] ${message}` : message, visualWarning);
       }
     }, visualWarning, signal, latestFatalRuntime);
     if (settings.looping || job.sourceKind === "importedHtml" || job.sourceKind === "html-import") {
@@ -786,11 +806,10 @@ export async function renderVideo(
     assertRuntimeHealthy("frame rendering initialization");
     const count = plan.count;
     onLog("Rendering frames");
-    for (let frame = 0; frame < count; frame++) {
-      if (signal.aborted) throw new Error("Generation stopped.");
-      await seekAndFlush(win, frame / settings.fps);
-      assertRuntimeHealthy(`frame ${frame}`);
-      const image = await capture(`frame ${frame}`);
+    // Canvas only: consecutive-frame change series for the (warning-only) pop detector below.
+    const popSteps: number[] = [];
+    let popPrev: Buffer | null = null;
+    const frameDone = async (frame: number, png: Buffer | null, image: Electron.NativeImage) => {
       const size = image.getSize();
       if (size.width !== job.width || size.height !== job.height)
         throw new Error(
@@ -798,9 +817,38 @@ export async function renderVideo(
         );
       await fs.writeFile(
         path.join(frames, `frame-${String(frame).padStart(6, "0")}.png`),
-        image.toPNG(),
+        png ?? image.toPNG(),
       );
+      if (canvasScene) {
+        const bitmap = image.toBitmap();
+        popSteps.push(popPrev ? pixelChangeRatio(popPrev, bitmap, 12, alpha) : 0);
+        popPrev = bitmap;
+      }
       if (frame % 10 === 0) progress(Math.round((frame / count) * 80));
+    };
+    if (canvasScene) {
+      // Canvas: draw frame i synchronously in the page and read the canvas pixels of that draw (no paint-event timing).
+      const mapping = await captureCanvasFrames(count, async (frame) => {
+        const reply = await win.webContents.executeJavaScript(CANVAS_CAPTURE_EXPR(frame));
+        assertRuntimeHealthy(`frame ${frame}`);
+        return reply as CanvasFrameReply;
+      }, async (frame, png) => frameDone(frame, png, nativeImage.createFromBuffer(png)), () => signal.aborted);
+      onLog(`Canvas capture: ${mapping.length} frames, scene frame 0..${mapping[mapping.length - 1]} mapped 1:1`);
+    } else
+    for (let frame = 0; frame < count; frame++) {
+      if (signal.aborted) throw new Error("Generation stopped.");
+      await seekAndFlush(win, frame / settings.fps);
+      assertRuntimeHealthy(`frame ${frame}`);
+      const image = await capture(`frame ${frame}`);
+      await frameDone(frame, null, image);
+    }
+    if (canvasScene) {
+      const pops = popReport(popSteps);
+      report.popCount = pops.pops.length;
+      report.popFrames = pops.pops.map((p) => p.frame);
+      // Warning only: a pop is a creative-quality hint (content swapped instead of transformed), never a reason to reject.
+      if (pops.pops.length)
+        visualWarning(`Visual preflight warning: [canvas warning] pop: ${pops.pops.length} one-frame jump(s) between otherwise calm frames: ${pops.pops.slice(0, 6).map((p) => `f${p.frame} (${(p.frame / settings.fps).toFixed(2)}s) ${(p.step * 100).toFixed(2)}%`).join(", ")}${pops.pops.length > 6 ? ", …" : ""}. Transform one persistent object between states instead of swapping drawings.`);
     }
     progress(82);
     const video = path.join(folder, `${baseName}${outputExtension(format)}`);

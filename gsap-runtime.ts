@@ -35,6 +35,11 @@ function loadGsapSource(): string {
 }
 
 // Removes any injected runtime (also cleans LLM tampering) so re-injection is exact.
+// Same fingerprint render.ts uses to recognise a Gefoot Canvas page; legacy HTML/GSAP pages never contain it.
+export function isCanvasHtml(html: string): boolean {
+  return html.includes('window.__GEOF_SCENE__=scene;') && html.includes('scene.drawFrame(ctx,');
+}
+
 export function stripGsapRuntime(html: string): string {
   return html.replace(injectedScriptPattern, '');
 }
@@ -44,6 +49,9 @@ export function stripGsapRuntime(html: string): string {
 // at capture time, which is itself inserted at the very start of <head>).
 export function ensureGsapRuntime(html: string): string {
   const stripped = stripGsapRuntime(html);
+  // Canvas pages (gefootHtml) never use GSAP: injecting 73 KB there only slows load and pollutes the page.
+  // Also removes a copy injected by an older version when a saved Canvas project is reopened.
+  if (isCanvasHtml(stripped)) return stripped;
   const script = `<script id="${GSAP_SCRIPT_ID}">${GSAP_MARKER}${loadGsapSource()}</script>`;
   if (!/<head\b[^>]*>/i.test(stripped))
     throw new Error('Cannot inject GSAP runtime: missing head');

@@ -33,3 +33,4 @@ export * from "./html-import";
 export * from "./csv-metadata";
 export * from "./harness/trace";
 export * from "./harness/observation";
+export { engineBuildInfo, engineStamp } from "./gefoot-runtime";

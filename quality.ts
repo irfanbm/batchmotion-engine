@@ -280,3 +280,30 @@ export function spikeReport(ratios:number[],ratioThreshold=4):SpikeReport{
 
 export interface BeatCoherenceReport{ok:boolean;beats:number;maxGap:number;reason?:string}
 export function beatCoherenceReport(source:string,duration:number):BeatCoherenceReport{const line=/\/\/\s*BEATS:([^\n]*)/i.exec(source);if(!line)return{ok:false,beats:0,maxGap:0,reason:'BEATS table missing'};const times=[...line[1].matchAll(/\bt=(\d+(?:\.\d+)?)\s*s/gi)].map(m=>Number(m[1]));if(times.length<2)return{ok:false,beats:times.length,maxGap:0,reason:'expected at least 2 beats'};let maxGap=0;for(let i=1;i<times.length;i++)maxGap=Math.max(maxGap,times[i]-times[i-1]);const ok=maxGap<=1&&times[times.length-1]<=duration+.001;return{ok,beats:times.length,maxGap,...(ok?{}:{reason:maxGap>1?'beat gap too large':'beats extend past duration'})}}
+
+// ---- Canvas liveness (catastrophic-only) -------------------------------------------------
+// Resolution independent; robust on gradients and dark scenes (measured on 7 synthetic + 1 real scene).
+export interface CanvasLivenessReport{blank:boolean;still:boolean;maxStep:number;maxEdge:number;maxSpan:number;reason:string}
+function bgraEdgeDensity(f:Buffer,w:number,h:number,thr=12){let e=0,n=0;const stride=Math.max(1,Math.floor(Math.sqrt((w*h)/250000)));for(let y=0;y<h-stride;y+=stride)for(let x=0;x<w-stride;x+=stride){const i=(y*w+x)*4,r=i+4*stride,d=i+w*4*stride;n++;const m=Math.max(Math.abs(f[i]-f[r]),Math.abs(f[i+1]-f[r+1]),Math.abs(f[i+2]-f[r+2]),Math.abs(f[i]-f[d]),Math.abs(f[i+1]-f[d+1]),Math.abs(f[i+2]-f[d+2]));if(m>thr)e++}return n?e/n:0}
+function bgraLumSpan(f:Buffer){const v:number[]=[];for(let i=0;i+3<f.length;i+=16)v.push(.2126*f[i+2]+.7152*f[i+1]+.0722*f[i]);if(!v.length)return 0;v.sort((a,b)=>a-b);return v[Math.floor(v.length*.99)]-v[Math.floor(v.length*.01)]}
+function bgraChange(a:Buffer,b:Buffer,thr=4){if(a.length!==b.length||a.length<4)return 1;let c=0,n=0;for(let i=0;i+3<a.length;i+=4){n++;if(Math.abs(a[i]-b[i])>thr||Math.abs(a[i+1]-b[i+1])>thr||Math.abs(a[i+2]-b[i+2])>thr)c++}return c/n}
+export function canvasLivenessReport(frames:Buffer[],width:number,height:number):CanvasLivenessReport{
+  if(frames.length<2)return{blank:false,still:false,maxStep:1,maxEdge:1,maxSpan:255,reason:''};
+  const maxEdge=Math.max(...frames.map(f=>bgraEdgeDensity(f,width,height))),maxSpan=Math.max(...frames.map(bgraLumSpan));
+  let maxStep=0;for(let i=1;i<frames.length;i++)maxStep=Math.max(maxStep,bgraChange(frames[i-1],frames[i]),bgraChange(frames[0],frames[i]));
+  const blank=maxEdge<.0005&&maxSpan<40,still=maxStep<.0002;
+  return{blank,still,maxStep,maxEdge,maxSpan,reason:blank?`all ${frames.length} sampled frames are blank (edge density ${(maxEdge*100).toFixed(3)}%, luminance span ${maxSpan.toFixed(0)})`:still?`all ${frames.length} sampled frames are identical (max pixel change ${(maxStep*100).toFixed(4)}% < 0.02%)`:''}
+}
+
+// ---- Canvas pop detector (WARNING ONLY, never a gate) --------------------------------------------------------------
+// A "pop" is a one-frame jump in a scene that is otherwise calm around it: the picture stands still, one frame changes
+// a visible share of pixels, then it stands still again (content swapped on an integer stage index, interpolation that
+// stops short of 1, ...). Ordinary fast motion changes similar amounts on neighbouring frames and is not flagged.
+// steps[i] = fraction of pixels changed between frame i-1 and i (steps[0] is ignored).
+export interface PopReport{pops:{frame:number;step:number;neighbour:number}[];maxStep:number}
+export function popReport(steps:number[],minStep=.003,ratio=10,floor=.0002):PopReport{
+  const pops:PopReport['pops']=[];let maxStep=0;
+  for(let i=1;i<steps.length;i++)maxStep=Math.max(maxStep,steps[i]);
+  for(let i=2;i<steps.length-1;i++){const neighbour=Math.max(steps[i-1]??0,steps[i+1]??0,floor);if(steps[i]>=minStep&&steps[i]>=ratio*neighbour)pops.push({frame:i,step:steps[i],neighbour})}
+  return{pops,maxStep}
+}

@@ -395,6 +395,7 @@ export async function capturePreviewStills(args: {
   width: number;
   height: number;
   duration: number;
+  fps?: number;
   loadFile: string;
   outDir: string;
   prefix: string;
@@ -442,7 +443,8 @@ export async function capturePreviewStills(args: {
     // Stills are approximate human previews, never measurement frames.
     await settle(1200);
     for (const [index, fraction] of [0, 0.5, 1].entries()) {
-      const time = args.duration * fraction;
+      // Canvas wraps at t==duration (frame 300 -> frame 0), so the final still uses the last real frame.
+      const time = canvasScene && fraction === 1 ? Math.max(0, args.duration - 1 / (args.fps ?? 30)) : args.duration * fraction;
       if (args.signal.aborted) throw args.signal.reason || new Error("Stopped.");
       if (canvasScene)
         await win.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('motionforge:frame',{detail:${time}}))`);
