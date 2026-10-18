@@ -1,30 +1,37 @@
-import { gefootHtml, gefootPrompt, kitIconNames } from './gefoot-runtime';
+import { gefootHtml, gefootPrompt } from './gefoot-runtime';
 export const BASE_W = 1920;
 export const BASE_H = 1080;
 
 /** Appended to every Canvas request: the host-provided MF kit plus the shape, layout and motion bar a sellable clip must meet. */
-export const CRAFT_CONTRACT = `HOST KIT (already in scope as the global MF; do not redefine it, do not paste it, just call it). Every helper is deterministic and draws in 1920x1080 units:
-- Icons: MF.icon(ctx, name, cx, cy, size, {color, width:2, progress, alpha, rotate, fill}) draws a professional line icon centred on (cx,cy) on a 24-unit grid; progress<1 draws its strokes on. MF.badge(ctx, name, cx, cy, size, {bg, fg, shape:'circle'|'squircle', progress, alpha, ring}) is a solid app-icon style badge. Names: ${kitIconNames.join(', ')}. Aliases such as package, parcel, payment, creditcard, money, invoice, discount, profile, settings, analytics, growth, location also resolve.
-- Surfaces: MF.card(ctx, x, y, w, h, {r, fill, stroke, shadow, alpha}) (x,y = top-left) is a rounded panel with a soft drop shadow; MF.rr(ctx, x, y, w, h, r) builds a rounded-rect path; MF.shadow / MF.noShadow set one consistent shadow.
-- Data UI: MF.bar(ctx, x, y, w, h, p, {color, track}), MF.ring(ctx, cx, cy, r, p, {width, color, track}), MF.line(ctx, x0, y0, x1, y1, p, {color, width, dash}), MF.text(ctx, str, x, y, {size, weight, color, align, tracking, alpha}), MF.fmt(value, {decimals, prefix, suffix}).
-- Motion: MF.seg(t, start, dur, ease) -> eased 0..1 of a window; MF.stagger(t, i, start, step, dur, ease); MF.track(t, [[time, value, ease], ...]) keyframes; MF.spring(t - start, {freq, damping}) a settle with natural overshoot; MF.enter(ctx, p, x, y, (c) => {...draw at local 0,0...}, {from:'up'|'down'|'left'|'right', dist, scale}) fade + travel + scale in; MF.camera(ctx, t, duration, {zoom:0.04, loop}) a slow push-in (call inside save/restore); MF.float(t, i, amp) idle drift; MF.ease.outCubic / outQuart / outExpo / outBack / inOutCubic / inOutSine; MF.mixColor, MF.rgba, MF.lerp, MF.clamp; MF.SAFE = {x0, x1, y0, y1} safe area.
+export const CRAFT_CONTRACT = `HOST MOTION KIT (already in scope as global MF; do not redefine it):
+- Surfaces: MF.card(ctx,x,y,w,h,{r,fill,stroke,shadow,alpha}), MF.rr, MF.shadow, MF.noShadow.
+- Typography/data: MF.text, MF.fmt, MF.bar, MF.ring, MF.line, MF.rgba, MF.mixColor.
+- Motion: MF.seg, MF.stagger, MF.track, MF.spring, MF.enter, MF.camera, MF.float, MF.ease, MF.lerp, MF.clamp, MF.SAFE. All are deterministic and use 1920x1080 scene units.
 
-OBJECT CRAFT (this is what makes the clip sellable):
-- Every recognisable object (cart, card, package, truck, coin, user, lock, bell, chart, phone, document...) is drawn with MF.icon or MF.badge, not hand-drawn from ad-hoc lines. Hand-draw only what the kit cannot express (a custom illustration, the hero product shape), and then with the same stroke weight, the same round joins and the same palette as the kit icons.
-- One visual system for the whole clip: one corner radius family, one icon stroke weight, one shadow, a palette of at most 3 colours plus neutrals, one font (MF.FONT) in at most 3 sizes. UI-like content sits on MF.card surfaces.
-- At thumbnail size every object must still be named correctly. No unexplained glyphs, ticks, dashes or decorative marks.
-- UNIQUENESS: each persistent object is drawn exactly once per frame and keeps its identity and anchor while it moves; never leave a duplicate copy standing.
+CUSTOM OBJECT CRAFT:
+- Do NOT use an icon library, named icon set, generic glyph, emoji, or a repeated universal symbol. Do NOT call MF.icon or MF.badge: they do not exist.
+- Draw the hero object yourself from 4-10 meaningful parts that explain its identity and function. For a card: body, chip, stripe, number blocks and logo mark. For a package: box planes, flap, tape, label and shadow. For a cart: basket, handle, two wheels, products and a distinct accent. For a phone: bezel, screen, camera, content and side buttons. Each concept needs its own silhouette, proportions and signature detail.
+- The hero silhouette must remain recognisable at thumbnail size. Supporting objects may be simpler, but must share the hero's custom palette, corner language, stroke weight and lighting. Never draw a generic circle plus a letter and call it an object.
+- Create named draw functions such as drawHeroCard, drawPackage, drawCart, drawCheckmark, drawRoute; keep each object's geometry in one place so it can be refined and animated independently.
+
+FLOW (the viewer must understand it without reading):
+- First 0.0-1.0s: establish one complete hero object and its destination; no abstract intro, no empty waiting, no simultaneous object dump.
+- Next beats: one action per beat in causal order: object appears -> moves/changes -> result appears. Use 3-5 beats total, each with a clear start and end.
+- Keep one persistent hero container through the whole story. Morph its state or move it; never replace the entire drawing with an unrelated composition. Every stage must inherit the previous stage's position or visual element.
+- Use one focal area and a consistent reading direction (left-to-right or bottom-to-top). Do not make cards, labels and connectors compete for attention.
+- Leave 0.5-0.9s of readable hold after each important state change. The final 1.5s is a clean, complete result frame suitable as a thumbnail.
 
 LAYOUT:
-- Plan the layout first: compute every object's rectangle in setup() from a simple grid inside MF.SAFE and draw from those rectangles. Nothing overlaps by accident, every object keeps a clear gap to its neighbours, text never sits on another object or on a moving part, reserved negative space stays empty.
-- Hierarchy: exactly one hero element at a time is clearly the largest and most contrasted; supporting elements are smaller and calmer.
+- In setup(), define rectangles for every object inside MF.SAFE before drawing. Reserve non-overlapping zones; keep 6% side and 8% top/bottom margins. Never let text, connectors or shadows collide with another object.
+- Exactly one hero element is largest and most contrasted. Supporting elements are smaller, quieter and introduced only when needed. No duplicate object is ever left behind.
 
-MOTION (professional, not template):
-- Every entrance is MF.enter with an eased progress (outCubic / outQuart / outExpo, or MF.spring for a small overshoot) lasting 0.45-0.9 s; groups stagger 0.06-0.12 s with MF.stagger. No linear moves, no instant pops, no element appearing at full alpha.
-- Lines, routes, icons and progress fill with draw-on (progress) in sync with the story. Values count up with an ease (MF.fmt on an eased value).
-- Exactly one primary motion at a time; everything else holds with at most a subtle MF.float idle. Stage changes overlap: the outgoing element eases out while the incoming one eases in, the shared container stays and morphs (MF.mixRect, MF.track).
-- Wrap the scene in a slow MF.camera push-in (zoom 0.02-0.05) for depth; use loop:true when the clip loops.
-- The final 1.5 s hold a complete, calm composition that works as the thumbnail.`;
+MOTION:
+- Use MF.seg/MF.stagger with outCubic, outQuart, outExpo or a restrained MF.spring; never linear motion, instant full-alpha pops, random jitter or teleporting.
+- Every entrance takes 0.45-0.9s; sibling stagger is 0.06-0.12s. Draw routes, progress, checks and values progressively in causal sync.
+- Use object-specific secondary motion: wheels rotate, a flap opens, a card tilts, a check draws on, a label settles. Do not give every object the same slide-in.
+- Only one primary motion runs at a time. Other elements hold or have subtle MF.float. Stage transitions overlap the outgoing and incoming states while preserving the shared hero.
+- Use a restrained MF.camera push-in of 0.02-0.05 for depth. Avoid excessive zooms, spins, bounces and decoration.
+- No visual event may require the viewer to guess what changed.`;
 
 export function buildGefootPrompt(concept: string, duration: 10 | 11 | 12, fps: number, seed: number, alpha = false): string {
   const prompt = gefootPrompt(concept);

@@ -1,7 +1,6 @@
 // MF: host-provided motion-design kit for Canvas scenes. The host evaluates it in the scene's own
 // scope (same seeded Math and Path2D the scene sees), so every helper is deterministic and pure in t.
-// Icons are drawn on a 24-unit grid with one stroke weight and round joins, so a whole scene keeps
-// one consistent icon style no matter which objects the concept asks for.
+// It deliberately ships NO icon set: every object is drawn by the scene itself so it carries the clip's own character.
 const MF = (() => {
   const TAU = Math.PI * 2;
   const clamp = (v, a = 0, b = 1) => (v < a ? a : v > b ? b : v);
@@ -115,161 +114,6 @@ const MF = (() => {
     ctx.restore();
   };
 
-  const star = () => {
-    let d = '';
-    for (let i = 0; i < 10; i++) {
-      const r = i % 2 ? 4.3 : 9.6, a = -Math.PI / 2 + (i * Math.PI) / 5;
-      d += `${i ? 'L' : 'M'}${(12 + r * Math.cos(a)).toFixed(2)} ${(12.6 + r * Math.sin(a)).toFixed(2)}`;
-    }
-    return `${d}Z`;
-  };
-  const gear = () => {
-    let d = '';
-    const teeth = 8;
-    for (let i = 0; i < teeth; i++) {
-      const a = (i / teeth) * TAU, s = TAU / teeth;
-      const pts = [[7.4, a - s * 0.32], [9.6, a - s * 0.18], [9.6, a + s * 0.18], [7.4, a + s * 0.32]];
-      for (const [r, b] of pts) d += `${d ? 'L' : 'M'}${(12 + r * Math.cos(b)).toFixed(2)} ${(12 + r * Math.sin(b)).toFixed(2)}`;
-    }
-    return `${d}ZM15 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0`;
-  };
-
-  const ICONS = {
-    check: 'M20 6 9 17l-5-5',
-    x: 'M18 6 6 18M6 6l12 12',
-    plus: 'M12 5v14M5 12h14',
-    minus: 'M5 12h14',
-    arrowRight: 'M5 12h14M13 6l6 6-6 6',
-    arrowLeft: 'M19 12H5M11 6l-6 6 6 6',
-    arrowUp: 'M12 19V5M6 11l6-6 6 6',
-    arrowDown: 'M12 5v14M6 13l6 6 6-6',
-    chevronRight: 'M9 6l6 6-6 6',
-    circle: 'M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0',
-    cart: 'M3 3h2l2.4 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 7H6M10.5 20a1.5 1.5 0 1 1-3 0a1.5 1.5 0 1 1 3 0M19.5 20a1.5 1.5 0 1 1-3 0a1.5 1.5 0 1 1 3 0',
-    bag: 'M6 7h12l1 14H5L6 7zM9 9V6a3 3 0 0 1 6 0v3',
-    box: 'M21 8 12 3 3 8v8l9 5 9-5V8zM3 8l9 5 9-5M12 13v8M7.5 5.5l9 5',
-    truck: 'M2 6h12v10H2zM14 9h4l3 3v4h-7zM8 18a2 2 0 1 1-4 0a2 2 0 1 1 4 0M19 18a2 2 0 1 1-4 0a2 2 0 1 1 4 0',
-    card: 'M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM2 10h20M6 15h4',
-    wallet: 'M3 7a2 2 0 0 1 2-2h12v4M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9H5a2 2 0 0 1-2-2zM16 14h.01',
-    coin: 'M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0M12 6v12M15 9c0-1.1-1.3-2-3-2s-3 .9-3 2 1.3 2 3 2 3 .9 3 2-1.3 2-3 2-3-.9-3-2',
-    receipt: 'M5 2h14v20l-3-2-2 2-2-2-2 2-2-2-3 2V2zM9 7h6M9 11h6M9 15h4',
-    bank: 'M3 10l9-6 9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 21h18',
-    percent: 'M19 5 5 19M9 6.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0M20 17.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0',
-    tag: 'M3 3h8l10 10-8 8L3 11V3zM8.5 7.5a1 1 0 1 1-2 0a1 1 0 1 1 2 0',
-    gift: 'M3 8h18v4H3zM5 12h14v9H5zM12 8v13M12 8C10 4 6 4 7.5 6.5S12 8 12 8zM12 8c2-4 6-4 4.5-1.5S12 8 12 8z',
-    user: 'M16 8a4 4 0 1 1-8 0a4 4 0 1 1 8 0M4 21a8 8 0 0 1 16 0',
-    users: 'M13 8a4 4 0 1 1-8 0a4 4 0 1 1 8 0M1 21a8 8 0 0 1 16 0M16 4.3a4 4 0 0 1 0 7.4M19 14.5a8 8 0 0 1 4 6.5',
-    lock: 'M7 11h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2zM8 11V7a4 4 0 0 1 8 0v4',
-    shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z',
-    shieldCheck: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3zM9 12l2 2 4-4',
-    bell: 'M6 16v-5a6 6 0 0 1 12 0v5l2 2H4l2-2zM10 21h4',
-    mail: 'M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM22 7l-10 7L2 7',
-    send: 'M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z',
-    chat: 'M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z',
-    home: 'M3 11l9-8 9 8M5 9.5V20h5v-6h4v6h5V9.5',
-    pin: 'M12 22s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12zM14.5 10a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0',
-    globe: 'M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0M3 12h18M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3z',
-    barChart: 'M3 20h18M6 16v-4M10 16V8M14 16v-6M18 16V5',
-    lineChart: 'M3 3v18h18M7 15l4-4 3 3 6-6',
-    trendUp: 'M3 17l6-6 4 4 8-8M15 7h6v6',
-    pie: 'M21 12A9 9 0 1 1 12 3v9h9zM15 3.3A9 9 0 0 1 20.7 9H15V3.3z',
-    gear: gear(),
-    search: 'M18 11a7 7 0 1 1-14 0a7 7 0 1 1 14 0M16 16l5 5',
-    heart: 'M12 20s-8-4.8-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 9c0 6.2-8 11-8 11z',
-    star: star(),
-    sparkle: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z',
-    clock: 'M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0M12 7v5l3 2',
-    calendar: 'M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM3 10h18M8 3v4M16 3v4',
-    phone: 'M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM11 18h2',
-    laptop: 'M5 5h14a1 1 0 0 1 1 1v10H4V6a1 1 0 0 1 1-1zM2 19h20l-2-3H4l-2 3z',
-    cpu: 'M7 7h10v10H7zM10 10h4v4h-4zM9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4',
-    wifi: 'M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 20h.01',
-    battery: 'M3 7h15a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1zM22 10v4M6 10v4M9 10v4',
-    cloud: 'M7 19a5 5 0 0 1-.6-10A6 6 0 0 1 18 9.5a4.5 4.5 0 0 1-.5 9.5H7z',
-    download: 'M12 3v12M7 10l5 5 5-5M4 21h16',
-    upload: 'M12 15V3M7 8l5-5 5 5M4 21h16',
-    bolt: 'M13 2 4 14h7l-1 8 9-12h-7l1-8z',
-    leaf: 'M5 19C5 10 10 5 20 4c-1 10-6 15-15 15zM5 19l8-8',
-    doc: 'M6 2h8l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM14 2v5h5M8 13h8M8 17h6',
-    folder: 'M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z',
-    play: 'M7 4l13 8-13 8V4z',
-    camera: 'M4 7h3l2-3h6l2 3h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zM16 13a4 4 0 1 1-8 0a4 4 0 1 1 8 0',
-    eye: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM15 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0',
-    rocket: 'M12 2c4 3 5 8 4 13H8C7 10 8 5 12 2zM8 15l-3 3 1 3 3-2M16 15l3 3-1 3-3-2M10 19h4M13.5 9a1.5 1.5 0 1 1-3 0a1.5 1.5 0 1 1 3 0',
-  };
-  const ALIASES = {
-    shoppingcart: 'cart', basket: 'cart', shoppingbag: 'bag', package: 'box', parcel: 'box', delivery: 'truck', shipping: 'truck',
-    creditcard: 'card', payment: 'card', money: 'coin', dollar: 'coin', cash: 'coin', invoice: 'receipt', bill: 'receipt',
-    discount: 'percent', sale: 'percent', price: 'tag', person: 'user', profile: 'user', account: 'user', team: 'users',
-    security: 'shield', secure: 'shieldCheck', verified: 'shieldCheck', password: 'lock', notification: 'bell', email: 'mail',
-    message: 'chat', location: 'pin', map: 'pin', world: 'globe', analytics: 'barChart', chart: 'barChart', growth: 'trendUp',
-    settings: 'gear', cog: 'gear', time: 'clock', schedule: 'calendar', mobile: 'phone', smartphone: 'phone', computer: 'laptop',
-    chip: 'cpu', energy: 'bolt', power: 'bolt', eco: 'leaf', file: 'doc', document: 'doc', video: 'play', photo: 'camera',
-    success: 'check', done: 'check', close: 'x', launch: 'rocket', favorite: 'heart', like: 'heart', rating: 'star', magic: 'sparkle',
-  };
-  const keyOf = (name) => {
-    const k = String(name || '').replace(/[-_\s]/g, '').toLowerCase();
-    const direct = Object.keys(ICONS).find((n) => n.toLowerCase() === k);
-    return direct || ALIASES[k] || 'circle';
-  };
-  const cache = {};
-  const pathOf = (name) => {
-    const k = keyOf(name);
-    return cache[k] || (cache[k] = new Path2D(ICONS[k]));
-  };
-  const DASH = 160;
-
-  // Line icon centred on (x, y), `size` px wide. progress < 1 draws the strokes on.
-  const icon = (ctx, name, x, y, size = 96, o = {}) => {
-    const { color = '#0f172a', width = 2, progress = 1, alpha = 1, rotate = 0, fillAlpha = 0.14 } = o;
-    if (progress <= 0 || alpha <= 0) return;
-    const p = pathOf(name);
-    ctx.save();
-    ctx.globalAlpha *= alpha;
-    ctx.translate(x, y);
-    if (rotate) ctx.rotate(rotate);
-    const k = size / 24;
-    ctx.scale(k, k);
-    ctx.translate(-12, -12);
-    if (o.fill) {
-      ctx.save();
-      ctx.globalAlpha *= fillAlpha * clamp(progress);
-      ctx.fillStyle = o.fill === true ? color : o.fill;
-      ctx.fill(p);
-      ctx.restore();
-    }
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = width;
-    ctx.strokeStyle = color;
-    if (progress < 1) ctx.setLineDash([progress * DASH, DASH]);
-    ctx.stroke(p);
-    ctx.restore();
-  };
-  // Solid circle / squircle with a centred icon: the standard "app icon" look.
-  const badge = (ctx, name, x, y, size = 120, o = {}) => {
-    const { bg = '#2563eb', fg = '#ffffff', shape = 'circle', progress = 1, alpha = 1, ring = null, iconScale = 0.5, width = 2.2 } = o;
-    if (alpha <= 0) return;
-    const sh = o.shadow ?? true;
-    ctx.save();
-    ctx.globalAlpha *= alpha;
-    if (sh) shadow(ctx, size * 0.3, size * 0.1, 'rgba(15,23,42,0.18)');
-    if (shape === 'circle') {
-      ctx.beginPath();
-      ctx.arc(x, y, size / 2, 0, TAU);
-    } else rr(ctx, x - size / 2, y - size / 2, size, size, size * 0.28);
-    ctx.fillStyle = bg;
-    ctx.fill();
-    noShadow(ctx);
-    if (ring) {
-      ctx.strokeStyle = ring;
-      ctx.lineWidth = size * 0.04;
-      ctx.stroke();
-    }
-    ctx.restore();
-    icon(ctx, name, x, y, size * iconScale, { color: fg, width, progress, alpha });
-  };
-
   const FONT = "Inter, 'Segoe UI', 'Helvetica Neue', Roboto, Arial, sans-serif";
   const text = (ctx, str, x, y, o = {}) => {
     const { size = 48, weight = 600, color = '#0f172a', align = 'center', baseline = 'middle', font = FONT, tracking = 0, alpha = 1, maxWidth } = o;
@@ -380,7 +224,7 @@ const MF = (() => {
   const SAFE = { x0: 116, x1: 1804, y0: 87, y1: 993 };
   return {
     TAU, SAFE, FONT, clamp, lerp, ease, seg, stagger, range, spring, track, wave, float, loop, mixRect,
-    rgba, mixColor, rr, shadow, noShadow, card, icon, badge, icons: Object.keys(ICONS), text, fmt,
+    rgba, mixColor, rr, shadow, noShadow, card, text, fmt,
     enter, camera, bar, ring, line,
   };
 })();
